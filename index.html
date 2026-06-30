@@ -759,7 +759,7 @@ async function fotoParaPDF(src){
     return { data:c.toDataURL('image/jpeg',0.85), ratio: ih/iw };
   } catch(e){ return null; }
 }
-function precioDetal(precio){ return Math.ceil((precio||0) * 1.40); }
+function precioDetal(precio){ return (Number(precio)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 // Carga una imagen lista para dibujar en canvas (robusto en celulares).
 function cargarDibujable(src){
   return new Promise(resolve => {
