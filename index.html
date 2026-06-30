@@ -86,7 +86,7 @@
         </div>
       </div>
       <div class="relative">
-        <input id="invSearch" oninput="renderInventario()" placeholder="Buscar por nombre o código…" class="w-full bg-white border border-slate-300 rounded-xl pl-10 pr-9 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <input id="invSearch" oninput="renderInventario()" placeholder="Buscar por nombre, código o modelo…" class="w-full bg-white border border-slate-300 rounded-xl pl-10 pr-9 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
         <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
         <button onclick="document.getElementById('invSearch').value='';renderInventario()" class="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full text-slate-400 hover:bg-slate-100">✕</button>
       </div>
@@ -371,7 +371,7 @@ function renderInventario(){
   if(!S.productos.length){ el.innerHTML=emptyState('Tu inventario está vacío. Toca “+ Producto” para agregar el primero.'); return; }
   const q=(document.getElementById('invSearch')?.value||'').trim().toLowerCase();
   let items=[...S.productos].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
-  if(q){ items=items.filter(p=>((p.nombre||'')+' '+(p.sku||'')).toLowerCase().includes(q)); }
+  if(q){ items=items.filter(p=>((p.nombre||'')+' '+(p.sku||'')+' '+(p.aplica||'')).toLowerCase().includes(q)); }
   if(!items.length){ el.innerHTML=emptyState('No se encontró ningún producto que coincida con “'+q+'”.'); return; }
   el.innerHTML=rowWrap(items.map(p=>{
     const bajo=(p.stock||0)<=(p.stockMin||0);
@@ -381,7 +381,8 @@ function renderInventario(){
         <div class="min-w-0">
           <div class="font-bold text-sm truncate">${p.nombre||'Sin nombre'}</div>
           <div class="text-[11px] text-slate-400 font-semibold mono">${p.sku||'—'}</div>
-          <div class="text-[13px] font-black text-emerald-700 mono">$${(p.precio||0).toFixed(2)}</div>
+          ${p.aplica?`<div class="text-[11px] text-blue-700 font-semibold leading-snug mt-0.5">🚛 ${p.aplica}</div>`:''}
+          <div class="text-[13px] font-black text-emerald-700 mono mt-0.5">$${(p.precio||0).toFixed(2)}</div>
         </div>
       </div>
       <div class="text-right">
