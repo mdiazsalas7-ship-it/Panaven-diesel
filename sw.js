@@ -1,5 +1,5 @@
 // Panaven SW — red primero, cache como respaldo offline.
-const CACHE = 'panaven-control-v22';
+const CACHE = 'panaven-control-v23';
 const SHELL = ['./', 'index.html', 'manifest.json'];
 
 self.addEventListener('install', e => {

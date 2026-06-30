@@ -969,10 +969,15 @@ function listaPDFBlob(){
   ty += 10;
 
   items.forEach((p) => {
-    // descripción puede ocupar 1 o 2 líneas
-    doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    // descripción (1-2 líneas) + aplicación debajo en letra pequeña
+    doc.setFont('helvetica','bold'); doc.setFontSize(10.5);
     const desc = doc.splitTextToSize(String(p.nombre||'Sin nombre'), 118).slice(0,2);
-    const rowH = desc.length > 1 ? 13 : 9;
+    const aplicaTxt = (p.aplica||'').trim();
+    doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
+    const aplica = aplicaTxt ? doc.splitTextToSize('Aplica: ' + aplicaTxt, 118).slice(0,2) : [];
+    const descH = desc.length * 4.4;
+    const aplicaH = aplica.length * 3.3;
+    const rowH = Math.max(9, descH + aplicaH + 4.5);
 
     if (ty + rowH > 280){ doc.addPage(); listaHeaderPDF(doc); ty = 45; listaColHeader(doc, ty); ty += 10; }
 
@@ -980,8 +985,13 @@ function listaPDFBlob(){
     doc.setFont('courier','normal'); doc.setFontSize(10); doc.setTextColor(60,60,60);
     doc.text(String(p.sku||'—').slice(0,16), 16, ty);
     // descripción
-    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(15,23,42);
+    doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(15,23,42);
     doc.text(desc, 52, ty);
+    // aplicación (más pequeña, en azul, debajo de la descripción)
+    if (aplica.length){
+      doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(37,99,235);
+      doc.text(aplica, 52, ty + descH);
+    }
     // precio USD
     doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(22,101,52);
     doc.text('$' + (p.precio||0).toFixed(2), 176, ty, {align:'right'});
