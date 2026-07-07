@@ -4,6 +4,9 @@ Sistema administrativo interno de **Panaven**, hecho desde cero. Reemplaza a la 
 de inventario anterior. Todo se guarda en tiempo real y se comparte entre los socios.
 
 ## Qué hace
+- **Acceso con contraseña**: solo los socios registrados pueden entrar (Firebase Authentication).
+- **Estado de cuenta por cliente**: al abrir un cliente ves cuánto te debe, su total
+  comprado y sus ventas pendientes de cobro; en la lista de clientes el saldo se ve de una vez.
 - **Clientes y proveedores**: registro con RIF, teléfono, contacto, dirección y notas.
 - **Catálogo de productos**: código, nombre, unidad, precio USD y existencia. Al escribir
   una línea en cualquier documento, autocompleta desde el catálogo (rellena precio y unidad).
@@ -77,9 +80,29 @@ de inventario anterior. Todo se guarda en tiempo real y se comparte entre los so
 
 Cada `git push` a la rama `main` vuelve a desplegar la app sola, automáticamente.
 
-## Seguridad
-La configuración de Firebase (incluida la `apiKey`) no es secreta: va en el código del
-navegador y es normal que se vea. Lo que protege la base son las **reglas de Firestore**.
-Antes de compartir el enlace público, ajusta las reglas para que solo tus socios puedan
-escribir. Las colecciones que usa esta app son: `clientes`, `proveedores`, `solicitudes`,
+## Seguridad (¡hacer esto antes de usarla en serio!)
+La app ahora tiene **inicio de sesión**: solo los socios con cuenta pueden entrar y la
+base de datos queda protegida. La `apiKey` de Firebase que se ve en el código no es
+secreta; lo que protege los datos son la autenticación y las reglas. Actívalo así
+(10 minutos, una sola vez):
+
+1. **Activar el inicio de sesión.** En https://console.firebase.google.com abre el
+   proyecto `panaven-diesel` → **Authentication** → *Get started* → pestaña
+   **Sign-in method** → habilita **Email/Password** (solo el primer interruptor) → Save.
+2. **Bloquear el auto-registro.** En Authentication → **Settings** → *User actions*:
+   desmarca **"Enable create (sign-up)"**. Así nadie puede crearse una cuenta por su
+   cuenta; solo las que tú crees.
+3. **Crear las cuentas de los socios.** En Authentication → pestaña **Users** →
+   **Add user**: correo y contraseña para cada socio (y para ti).
+4. **Publicar las reglas.** En **Firestore Database** → pestaña **Rules**: borra lo que
+   haya, pega el contenido del archivo `firestore.rules` de este proyecto y pulsa
+   **Publish**. Desde ese momento, sin sesión iniciada nadie puede leer ni escribir.
+5. Sube los archivos nuevos a GitHub (`git add . && git commit -m "login" && git push`).
+   Al abrir la app aparecerá la pantalla de acceso; cada socio entra una vez y la
+   sesión queda guardada en su teléfono.
+
+Para cerrar sesión: **Ajustes → Cuenta → Cerrar sesión**. Si un socio olvida su
+contraseña, cámbiasela desde Authentication → Users → menú ⋮ → *Reset password*.
+
+Las colecciones que usa esta app son: `clientes`, `proveedores`, `solicitudes`,
 `productos`, `cotizaciones`, `notas`, `ventas`, `gastos` y `config`.

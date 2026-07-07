@@ -11,6 +11,7 @@
 <meta name="theme-color" content="#0f1e3d">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <style>
 :root{
   --ink:#0f1e3d;         /* azul marino Panaven */
@@ -61,6 +62,20 @@ header.app .t strong{font-size:18px; letter-spacing:.01em}
 .tasa-chip b{font-size:14px}
 
 main{max-width:860px; margin:0 auto; padding:14px 14px 8px}
+
+/* ===== Login ===== */
+#loginScreen{
+  position:fixed; inset:0; z-index:100; background:var(--bg, #f4f6fa);
+  display:flex; align-items:center; justify-content:center; padding:20px;
+}
+#loginScreen .card-login{
+  background:#fff; border-radius:18px; box-shadow:0 8px 40px rgba(15,30,61,.15);
+  padding:28px 24px; width:100%; max-width:380px; text-align:center;
+}
+#loginScreen img{max-width:230px; width:100%; margin:0 auto 6px; display:block}
+#loginScreen h2{font-size:16px; margin:4px 0 14px; color:var(--muted); font-weight:600}
+#loginScreen input{text-align:left}
+#loginErr{color:var(--bad, #c0262d); font-size:13px; font-weight:600; min-height:18px; margin-top:8px}
 
 /* ===== Nav inferior ===== */
 nav.bottom{
@@ -303,6 +318,21 @@ textarea.f{resize:vertical; min-height:64px}
 </head>
 <body>
 
+<!-- ============ LOGIN ============ -->
+<div id="loginScreen">
+  <div class="card-login">
+    <img id="brandLogin" alt="Panaven">
+    <h2>Sistema administrativo · Acceso de socios</h2>
+    <label class="f" style="text-align:left">Correo</label>
+    <input class="f" id="loginEmail" type="email" inputmode="email" autocomplete="username" placeholder="tucorreo@ejemplo.com">
+    <label class="f" style="text-align:left">Contraseña</label>
+    <input class="f" id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••"
+      onkeydown="if(event.key==='Enter') doLogin()">
+    <div id="loginErr"></div>
+    <button class="btn primary block" id="loginBtn" onclick="doLogin()" style="margin-top:6px">Entrar</button>
+  </div>
+</div>
+
 <header class="app">
   <img class="brand" id="brandTop" alt="Panaven">
   <div class="t">
@@ -455,6 +485,11 @@ textarea.f{resize:vertical; min-height:64px}
       <input class="f" id="cfgIva" type="number" step="0.1" inputmode="decimal" placeholder="16">
       <div class="actions"><button class="btn primary block" onclick="saveEmpresa()">Guardar datos</button></div>
     </div>
+    <div class="card">
+      <h3 style="font-size:15px; margin-bottom:4px">Cuenta</h3>
+      <p style="color:var(--muted); font-size:13px; margin:0 0 10px">Sesión iniciada como <b id="userEmail">—</b></p>
+      <button class="btn danger block" onclick="doLogout()">Cerrar sesión</button>
+    </div>
     <p style="text-align:center; color:var(--muted); font-size:12px">Panaven · Administración v1 — datos en tiempo real (Firestore)</p>
   </section>
 </main>
@@ -510,6 +545,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+const auth = firebase.auth();
 db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
 
 /* Logo Panaven incrustado (no depende de archivos externos) */
@@ -598,6 +634,52 @@ function listen(col, key, cb){
     renderAll();
   }, e=>{ console.error(col, e); toast('Error de conexión con '+col, true); });
 }
+/* ===================== AUTENTICACIÓN ===================== */
+let appStarted = false;
+
+auth.onAuthStateChanged(u=>{
+  if(u){
+    $('loginScreen').style.display = 'none';
+    $('userEmail').textContent = u.email || '';
+    if(!appStarted){ appStarted = true; startApp(); }
+  } else {
+    $('loginScreen').style.display = 'flex';
+    setTimeout(()=> $('loginEmail')?.focus(), 100);
+  }
+});
+
+async function doLogin(){
+  const email = $('loginEmail').value.trim();
+  const pass = $('loginPass').value;
+  const err = $('loginErr');
+  err.textContent = '';
+  if(!email || !pass){ err.textContent = 'Escribe tu correo y contraseña.'; return; }
+  $('loginBtn').disabled = true; $('loginBtn').textContent = 'Entrando…';
+  try{
+    await auth.signInWithEmailAndPassword(email, pass);
+    $('loginPass').value = '';
+  }catch(e){
+    const msgs = {
+      'auth/invalid-credential':'Correo o contraseña incorrectos.',
+      'auth/wrong-password':'Contraseña incorrecta.',
+      'auth/user-not-found':'Ese correo no tiene acceso. Pídele al administrador que te registre.',
+      'auth/invalid-email':'El correo no es válido.',
+      'auth/too-many-requests':'Demasiados intentos. Espera unos minutos e intenta de nuevo.',
+      'auth/network-request-failed':'Sin conexión. Revisa tu internet e intenta de nuevo.'
+    };
+    err.textContent = msgs[e.code] || 'No se pudo iniciar sesión. Intenta de nuevo.';
+  }
+  $('loginBtn').disabled = false; $('loginBtn').textContent = 'Entrar';
+}
+
+async function doLogout(){
+  if(!confirm('¿Cerrar sesión en este dispositivo?')) return;
+  await auth.signOut();
+  location.reload();
+}
+
+/* ===================== ARRANQUE (solo con sesión) ===================== */
+function startApp(){
 listen('clientes','clientes');
 listen('proveedores','proveedores');
 listen('productos','productos');
@@ -623,6 +705,7 @@ db.collection('config').doc('general').onSnapshot(d=>{
   $('cfgDir').value = S.config.empresa.dir || '';
   renderAll();
 });
+} // fin startApp()
 
 /* ===================== CONFIG ===================== */
 function openTasa(){
@@ -680,13 +763,18 @@ function renderContactos(){
     box.innerHTML = `<div class="empty"><svg fill="none" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg><br>No hay ${col} ${q?'que coincidan':'registrados todavía'}.</div>`;
     return;
   }
-  box.innerHTML = list.map(c=>`
+  box.innerHTML = list.map(c=>{
+    const deuda = col==='clientes' ? deudaCliente(c.id).saldo : 0;
+    return `
     <div class="item-row" onclick="openContacto('${col}','${c.id}')">
       <div class="avatar ${col==='proveedores'?'prov':''}">${esc((c.nombre||'?').charAt(0).toUpperCase())}</div>
       <div class="info"><b>${esc(c.nombre)}</b>
         <small>${esc(c.rif||'Sin RIF')}${c.tel?' · '+esc(c.tel):''}</small></div>
-      <div class="right"><small>${c.contacto?esc(c.contacto):''}</small></div>
-    </div>`).join('');
+      <div class="right">${deuda>0.009
+        ? `<b style="color:var(--warn)">${usd(deuda)}</b><small style="color:var(--warn)">por cobrar</small>`
+        : `<small>${c.contacto?esc(c.contacto):''}</small>`}</div>
+    </div>`;
+  }).join('');
 }
 
 function newContacto(){ contactoForm(contactoCol(), null); }
@@ -734,12 +822,40 @@ async function delContacto(col, id){
   closeModal(); toast('Eliminado');
 }
 
+function deudaCliente(id){
+  const vts = S.ventas.filter(v=> v.contactoId===id && v.estado!=='anulada');
+  const pendientes = vts.filter(v=> ((v.total||0)-(v.pagado||0)) > 0.009)
+    .sort((a,b)=> (a.fecha?.seconds||0)-(b.fecha?.seconds||0));
+  const saldo = pendientes.reduce((s,v)=> s + ((v.total||0)-(v.pagado||0)), 0);
+  const comprado = vts.reduce((s,v)=> s + (v.total||0), 0);
+  return { saldo, pendientes, comprado, ventas: vts.length };
+}
+
 function openContacto(col, id){
   const c = S[col].find(x=>x.id===id); if(!c) return;
   const esCli = col==='clientes';
   const docs = esCli
     ? S.cotizaciones.filter(d=>d.contactoId===id).length + ' cotizaciones · ' + S.notas.filter(d=>d.contactoId===id).length + ' notas'
     : S.solicitudes.filter(d=>d.contactoId===id).length + ' solicitudes';
+  let cuenta = '';
+  if(esCli){
+    const d = deudaCliente(id);
+    cuenta = `
+    <label class="f">Estado de cuenta</label>
+    <div class="dl">
+      <div class="r"><span>Total comprado</span><b>${usd(d.comprado)} <small>(${d.ventas} venta${d.ventas!==1?'s':''})</small></b></div>
+      <div class="r"><span style="color:${d.saldo>0.009?'var(--warn)':'var(--ok)'}"><b>Saldo por cobrar</b></span>
+        <b style="color:${d.saldo>0.009?'var(--warn)':'var(--ok)'}">${usd(d.saldo)}</b></div>
+    </div>
+    ${d.pendientes.length?`
+    <label class="f">Ventas pendientes de cobro</label>
+    <div class="dl">
+      ${d.pendientes.map(v=>`<div class="r" style="cursor:pointer" onclick="closeModal();openVenta('${v.id}')">
+        <span>${esc(v.numero)} · ${fdate(v.fecha)}</span>
+        <b style="color:var(--warn)">debe ${usd((v.total||0)-(v.pagado||0))} <small>de ${usd(v.total)}</small></b>
+      </div>`).join('')}
+    </div>`:''}`;
+  }
   openModal(modalHead(c.nombre, esCli?'Cliente':'Proveedor') + `
     <div class="dl">
       <div class="r"><span>RIF / CI</span><b>${esc(c.rif||'—')}</b></div>
@@ -750,6 +866,7 @@ function openContacto(col, id){
       <div class="r"><span>Historial</span><b>${docs}</b></div>
       ${c.notas?`<div class="r"><span>Notas</span><b>${esc(c.notas)}</b></div>`:''}
     </div>
+    ${cuenta}
     <div class="doc-actions">
       ${c.tel?`<button class="btn ok" onclick="waTo('${esc(c.tel)}')">WhatsApp</button>`:''}
       ${esCli
@@ -1729,6 +1846,7 @@ if('serviceWorker' in navigator){
 
 $('brandTop').src = LOGO;
 $('brandSide').src = LOGO;
+$('brandLogin').src = LOGO;
 go('inicio');
 </script>
 </body>
