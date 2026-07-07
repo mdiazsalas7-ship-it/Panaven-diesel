@@ -1,6 +1,6 @@
 // Panaven Admin SW — red primero, cache como respaldo offline.
-const CACHE = 'panaven-admin-v1';
-const SHELL = ['./', 'index.html', 'manifest.json', 'icon.png'];
+const CACHE = 'panaven-admin-v2';
+const SHELL = ['./', 'index.html', 'manifest.json', 'icon.png', 'logo.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(()=>{}));

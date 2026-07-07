@@ -273,13 +273,12 @@ textarea.f{resize:vertical; min-height:64px}
   body{background:#fff; padding:0}
   body > *:not(#printArea){display:none !important}
   #printArea{display:block; color:#000; font-size:12px}
-  #printArea .ph{display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #0f1e3d; padding-bottom:10px; margin-bottom:14px}
-  #printArea .ph img{width:64px; height:64px}
-  #printArea .ph .co b{font-size:18px; display:block}
-  #printArea .ph .co small{display:block; color:#333; line-height:1.4}
+  #printArea .ph{display:flex; justify-content:space-between; align-items:center; gap:16px; border-bottom:3px solid #0f1e3d; padding-bottom:10px; margin-bottom:6px}
+  #printArea .ph img.banner{height:58px; width:auto; max-width:62%; object-fit:contain}
   #printArea .ph .dn{text-align:right}
   #printArea .ph .dn h2{font-size:15px; letter-spacing:.05em; margin:0}
   #printArea .ph .dn .num{font-family:ui-monospace,monospace; font-size:16px; font-weight:800}
+  #printArea .co-line{font-size:10.5px; color:#333; margin-bottom:12px; line-height:1.5}
   #printArea table{width:100%; border-collapse:collapse; margin-top:10px}
   #printArea th{background:#0f1e3d; color:#fff; text-align:left; padding:7px 8px; font-size:11px; text-transform:uppercase; letter-spacing:.04em}
   #printArea td{border-bottom:1px solid #ccc; padding:7px 8px; vertical-align:top}
@@ -1182,26 +1181,23 @@ function waSend(tel, txt){
 /* ===================== IMPRESIÓN ===================== */
 function printHeader(titulo, numero, extra){
   const e = S.config.empresa;
+  const datos = [e.nombre||'Panaven', e.rif, e.dir, e.tel].filter(Boolean).join(' · ');
   return `<div class="ph">
-    <div style="display:flex; gap:12px; align-items:center">
-      <img src="icon.png" alt="">
-      <div class="co">
-        <b>${esc(e.nombre||'Panaven')}</b>
-        <small>${esc(e.rif||'')}</small>
-        <small>${esc(e.dir||'')}</small>
-        <small>${esc(e.tel||'')}</small>
-      </div>
-    </div>
+    <img class="banner" src="logo.png" alt="Panaven" onerror="this.src='icon.png'; this.style.height='56px'">
     <div class="dn">
       <h2>${esc(titulo)}</h2>
       <div class="num">${esc(numero)}</div>
       <div>${esc(extra||'')}</div>
     </div>
-  </div>`;
+  </div>
+  <div class="co-line">${esc(datos)}</div>`;
 }
 function doPrint(html){
   $('printArea').innerHTML = html;
-  setTimeout(()=> window.print(), 150);
+  const imgs = [...$('printArea').querySelectorAll('img')];
+  const waits = imgs.map(im => (im.complete ? Promise.resolve()
+    : new Promise(r => { im.onload = im.onerror = r; })));
+  Promise.all(waits).then(()=> setTimeout(()=> window.print(), 100));
 }
 
 function printSolicitud(id){

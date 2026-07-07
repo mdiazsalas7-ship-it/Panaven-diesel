@@ -27,6 +27,7 @@ de inventario anterior. Todo se guarda en tiempo real y se comparte entre los so
 - `manifest.json` — permite instalarla como app en el teléfono.
 - `sw.js` — service worker (carga rápida / instalación / uso offline).
 - `icon.png` — logo de Panaven (ícono de la app).
+- `logo.png` — logo horizontal que sale en el membrete de cotizaciones, notas y solicitudes en PDF.
 - `.gitignore` — archivos que Git debe ignorar (si tu archivo se llama `_gitignore`, renómbralo a `.gitignore`).
 
 ## Primer uso (5 minutos)
