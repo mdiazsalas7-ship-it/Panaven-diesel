@@ -917,8 +917,13 @@ function productoForm(p){
       <div><label class="f">Unidad</label><input class="f" id="pUnidad" value="${esc(p?.unidad||'und')}" placeholder="und"></div>
     </div>
     <div class="grid2">
-      <div><label class="f">Precio de venta (USD)</label><input class="f" id="pPrecio" type="number" step="0.01" inputmode="decimal" value="${p?.precio ?? ''}" placeholder="0.00"></div>
+      <div><label class="f">Precio de venta (USD)</label><input class="f" id="pPrecio" type="number" step="0.01" inputmode="decimal" value="${p?.precio ?? ''}" placeholder="0.00" oninput="prodMargen()"></div>
+      <div><label class="f">Costo (USD) <small style="color:var(--muted)">— solo lo ven los socios</small></label><input class="f" id="pCosto" type="number" step="0.01" inputmode="decimal" value="${p?.costo ?? ''}" placeholder="0.00" oninput="prodMargen()"></div>
+    </div>
+    <p class="sub" id="pMargen" style="margin:4px 0 0; font-size:13px; font-weight:600"></p>
+    <div class="grid2">
       <div><label class="f">Existencia (stock)</label><input class="f" id="pStock" type="number" step="any" inputmode="decimal" value="${p?.stock ?? ''}" placeholder="0"></div>
+      <div></div>
     </div>
     <label class="f">Notas</label>
     <textarea class="f" id="pNotas" placeholder="Proveedor habitual, costo, equivalencias…">${esc(p?.notas||'')}</textarea>
@@ -926,7 +931,17 @@ function productoForm(p){
       ${p?`<button class="btn danger" onclick="delProducto('${p.id}')">Eliminar</button>`:''}
       <button class="btn primary" onclick="saveProducto('${p?p.id:''}')">${p?'Guardar cambios':'Registrar'}</button>
     </div>`);
-  setTimeout(()=> $('pNombre').focus(), 50);
+  setTimeout(()=>{ $('pNombre').focus(); prodMargen(); }, 50);
+}
+
+function prodMargen(){
+  const el = $('pMargen'); if(!el) return;
+  const precio = num($('pPrecio')?.value), costo = num($('pCosto')?.value);
+  if(precio>0 && costo>0){
+    const g = precio - costo, pct = g/precio*100;
+    el.style.color = g>=0 ? 'var(--ok)' : 'var(--bad)';
+    el.textContent = 'Ganancia por unidad: '+usd(g)+' ('+money(pct)+'% del precio)';
+  } else el.textContent = '';
 }
 
 async function saveProducto(id){
@@ -934,6 +949,7 @@ async function saveProducto(id){
     nombre: $('pNombre').value.trim(), codigo: $('pCodigo').value.trim(),
     unidad: $('pUnidad').value.trim() || 'und',
     precio: num($('pPrecio').value),
+    costo: $('pCosto').value === '' ? null : num($('pCosto').value),
     stock: $('pStock').value === '' ? null : num($('pStock').value),
     notas: $('pNotas').value.trim(),
     actualizado: firebase.firestore.FieldValue.serverTimestamp()
@@ -957,6 +973,8 @@ function openProducto(id){
       <div class="r"><span>Código</span><b>${esc(p.codigo||'—')}</b></div>
       <div class="r"><span>Unidad</span><b>${esc(p.unidad||'und')}</b></div>
       <div class="r"><span>Precio de venta</span><b>${p.precio ? usd(p.precio) : '—'}</b></div>
+      ${p.costo!=null?`<div class="r"><span>Costo</span><b>${usd(p.costo)}</b></div>
+      <div class="r"><span>Ganancia por unidad</span><b style="color:${(p.precio-p.costo)>=0?'var(--ok)':'var(--bad)'}">${usd((p.precio||0)-p.costo)}${p.precio?' ('+money(((p.precio-p.costo)/p.precio)*100)+'%)':''}</b></div>`:''}
       <div class="r"><span>Existencia</span><b>${p.stock==null ? 'No se controla' : money(p.stock)+' '+esc(p.unidad||'und')}</b></div>
       ${p.notas?`<div class="r"><span>Notas</span><b>${esc(p.notas)}</b></div>`:''}
     </div>
@@ -1316,6 +1334,22 @@ const METODOS = ['Efectivo $','Efectivo Bs','Pago móvil','Transferencia Bs','Ze
 const vEstadoLabel = e => ({porcobrar:'por cobrar', abonada:'abonada', pagada:'pagada', anulada:'anulada'}[e] || e);
 const ventaEstado = (total, pagado) => (total - pagado) <= 0.009 ? 'pagada' : (pagado > 0 ? 'abonada' : 'porcobrar');
 
+// Busca el costo en el catálogo (coincidencia por nombre) y lo congela en la venta.
+function costoDeItem(desc){
+  const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === (desc||'').trim().toLowerCase());
+  return (p && p.costo!=null) ? num(p.costo) : null;
+}
+function costearItems(items){
+  let costoTotal = 0, completo = true;
+  const out = items.map(i=>{
+    const c = costoDeItem(i.desc);
+    if(c==null){ completo = false; return {...i}; }
+    costoTotal += (num(i.cant)||0) * c;
+    return {...i, costo: c};
+  });
+  return { items: out, costoTotal: Math.round(costoTotal*100)/100, costoCompleto: completo };
+}
+
 // Al aprobar una cotización: crea la VENTA y la NOTA DE ENTREGA en un solo paso.
 async function concretarVenta(cotId){
   const c = S.cotizaciones.find(x=>x.id===cotId); if(!c) return;
@@ -1336,11 +1370,13 @@ async function concretarVenta(cotId){
       items: c.items.map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und'})),
       recibe: '', notas: '', cotizacionNum: c.numero||'', ventaId: ventaRef.id
     });
+    const costeo = costearItems(c.items);
     batch.set(ventaRef, {
       numero: vNum, estado: 'porcobrar', fecha: now, actualizado: now,
       contactoId: c.contactoId, contactoNombre: c.contactoNombre||'',
-      items: c.items, conIva: !!c.conIva, ivaPct: c.ivaPct||16,
+      items: costeo.items, conIva: !!c.conIva, ivaPct: c.ivaPct||16,
       subtotal: c.subtotal, iva: c.iva, total: c.total, tasa: c.tasa||S.config.tasa||0,
+      costoTotal: costeo.costoTotal, costoCompleto: costeo.costoCompleto,
       cotizacionId: c.id, cotizacionNum: c.numero||'', notaId: notaRef.id, notaNum: neNum,
       abonos: [], pagado: 0, saldo: c.total
     });
@@ -1400,11 +1436,13 @@ async function saveVentaDirecta(){
       items: items.map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und'})),
       recibe:'', notas:'', cotizacionNum:'', ventaId: ventaRef.id
     });
+    const costeo = costearItems(items);
     batch.set(ventaRef, {
       numero: vNum, estado:'porcobrar', fecha: now, actualizado: now,
       contactoId, contactoNombre: cli?.nombre||'',
-      items, conIva, ivaPct: S.config.iva||16,
+      items: costeo.items, conIva, ivaPct: S.config.iva||16,
       subtotal: t.sub, iva: t.iva, total: t.tot, tasa: num($('dTasa').value)||S.config.tasa||0,
+      costoTotal: costeo.costoTotal, costoCompleto: costeo.costoCompleto,
       cotizacionId:'', cotizacionNum:'', notaId: notaRef.id, notaNum: neNum,
       abonos: [], pagado: 0, saldo: t.tot
     });
@@ -1427,6 +1465,12 @@ function openVenta(id){
       ${v.items.map(i=>`<div class="r"><span>${esc(i.desc)} × ${money(i.cant)}</span><b>${usd(i.cant*i.precio)}</b></div>`).join('')}
       ${v.conIva?`<div class="r"><span>IVA ${v.ivaPct||16}%</span><b>${usd(v.iva)}</b></div>`:''}
       <div class="r"><span><b>Total</b></span><b>${usd(v.total)}</b></div>
+      ${v.costoTotal>0?(()=>{
+        const gan = (v.subtotal||0) - v.costoTotal;
+        const pct = v.subtotal ? gan/v.subtotal*100 : 0;
+        return `<div class="r"><span>Costo mercancía${v.costoCompleto?'':' <small>(incompleto)</small>'}</span><b>${usd(v.costoTotal)}</b></div>
+        <div class="r"><span style="color:${gan>=0?'var(--ok)':'var(--bad)'}">Ganancia</span><b style="color:${gan>=0?'var(--ok)':'var(--bad)'}">${usd(gan)} <small>(${money(pct)}%)</small></b></div>`;
+      })():''}
       <div class="r"><span style="color:var(--ok)">Pagado</span><b style="color:var(--ok)">${usd(v.pagado||0)}</b></div>
       <div class="r"><span style="color:var(--warn)"><b>Saldo pendiente</b></span><b style="color:var(--warn)">${usd(saldo)}${v.tasa&&saldo?'<br><small>'+bs(saldo*v.tasa)+'</small>':''}</b></div>
     </div>
@@ -1596,10 +1640,16 @@ const sameMonth = ts => {
 function finTotals(){
   const activas = S.ventas.filter(v=>v.estado!=='anulada');
   const porCobrar = activas.reduce((s,v)=> s + Math.max(0,(v.total||0)-(v.pagado||0)), 0);
-  const ventasMes = activas.filter(v=>sameMonth(v.fecha)).reduce((s,v)=> s+(v.total||0), 0);
+  const mes = activas.filter(v=>sameMonth(v.fecha));
+  const ventasMes = mes.reduce((s,v)=> s+(v.total||0), 0);
   const cobradoMes = activas.reduce((s,v)=> s + (v.abonos||[]).filter(a=>sameMonth(a.fecha)).reduce((x,a)=>x+(a.montoUsd||0),0), 0);
   const gastosMes = S.gastos.filter(g=>sameMonth(g.fecha)).reduce((s,g)=> s+(g.montoUsd||0), 0);
-  return {porCobrar, ventasMes, cobradoMes, gastosMes};
+  const costoMes = mes.reduce((s,v)=> s+(v.costoTotal||0), 0);
+  const gananciaBruta = mes.filter(v=>(v.costoTotal||0)>0)
+    .reduce((s,v)=> s + ((v.subtotal||0)-(v.costoTotal||0)), 0);
+  const gananciaNeta = gananciaBruta - gastosMes;
+  const conCosto = mes.filter(v=>(v.costoTotal||0)>0).length;
+  return {porCobrar, ventasMes, cobradoMes, gastosMes, costoMes, gananciaBruta, gananciaNeta, ventasConCosto: conCosto, ventasDelMes: mes.length};
 }
 
 function ventaRow(v){
@@ -1624,11 +1674,16 @@ function gastoRow(g){
 function renderFinanzas(){
   if(!$('finStats')) return;
   const t = finTotals();
+  const gColor = t.gananciaNeta>=0 ? 'var(--ok)' : 'var(--bad)';
+  const costoNota = t.ventasDelMes && t.ventasConCosto < t.ventasDelMes
+    ? t.ventasConCosto+' de '+t.ventasDelMes+' ventas con costo' : 'costo de lo vendido';
   $('finStats').innerHTML = `
     <div class="stat" onclick="setSubTab('finanzas','ventas');setVentaFilter('porcobrar')"><small>Por cobrar</small><b>${usd(t.porCobrar)}</b><span class="sub">saldo pendiente</span></div>
     <div class="stat"><small>Cobrado este mes</small><b>${usd(t.cobradoMes)}</b><span class="sub">pagos recibidos</span></div>
-    <div class="stat"><small>Ventas del mes</small><b>${usd(t.ventasMes)}</b><span class="sub">total vendido</span></div>
-    <div class="stat" onclick="setSubTab('finanzas','gastos')"><small>Gastos del mes</small><b>${usd(t.gastosMes)}</b><span class="sub">egresos</span></div>`;
+    <div class="stat"><small>Ventas del mes</small><b>${usd(t.ventasMes)}</b><span class="sub">${t.ventasDelMes} venta${t.ventasDelMes!==1?'s':''}</span></div>
+    <div class="stat"><small>Costo mercancía</small><b>${usd(t.costoMes)}</b><span class="sub">${costoNota}</span></div>
+    <div class="stat" onclick="setSubTab('finanzas','gastos')"><small>Gastos del mes</small><b>${usd(t.gastosMes)}</b><span class="sub">egresos</span></div>
+    <div class="stat"><small>Ganancia neta</small><b style="color:${gColor}">${usd(t.gananciaNeta)}</b><span class="sub">bruta ${usd(t.gananciaBruta)} − gastos</span></div>`;
   const q = ($('qFinanzas').value||'').toLowerCase();
   const box = $('listFinanzas');
   if(S.sub.finanzas==='ventas'){
@@ -1817,7 +1872,7 @@ function renderInicio(){
   const nDeuda = S.ventas.filter(v=>v.estado==='porcobrar'||v.estado==='abonada').length;
   $('stPorCobrarSub').textContent = nDeuda ? nDeuda+' venta'+(nDeuda!==1?'s':'')+' pendiente'+(nDeuda!==1?'s':'') : 'al día';
   $('stVentasMes').textContent = usd(ft.ventasMes);
-  $('stVentasMesSub').textContent = 'gastos: '+usd(ft.gastosMes);
+  $('stVentasMesSub').textContent = 'ganancia neta: '+usd(ft.gananciaNeta);
 
   const recent = [
     ...S.cotizaciones.map(d=>({...d,_t:'cot'})),

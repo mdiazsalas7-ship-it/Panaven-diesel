@@ -27,6 +27,10 @@ de inventario anterior. Todo se guarda en tiempo real y se comparte entre los so
   La app calcula lo pagado y el **saldo pendiente**; la venta pasa sola de
   "por cobrar" → "abonada" → "pagada". La pestaña **Finanzas** muestra el total por
   cobrar, lo cobrado en el mes y las ventas del mes.
+- **Costo y ganancia**: cada producto del catálogo puede tener su costo (visible solo
+  dentro de la app). Al concretar una venta el costo queda congelado en ella y se ve la
+  ganancia de esa venta. Finanzas muestra el cierre del mes: ventas, costo de mercancía,
+  gastos y **ganancia neta**. Las ventas anteriores a esta versión no tienen costo guardado.
 - **Gastos (G-0001…)**: registro de egresos por categoría (mercancía, flete, servicios,
   alquiler, nómina…), en USD o Bs, con el total del mes en Finanzas y en Inicio.
 - **Tasa del día**: se cambia tocando el recuadro azul del encabezado o en Ajustes.
