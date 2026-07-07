@@ -13,8 +13,19 @@ de inventario anterior. Todo se guarda en tiempo real y se comparte entre los so
 - **Cotizaciones (COT-0001…)**: presupuesto a un cliente en USD con equivalente en Bs
   a la tasa del día, IVA opcional, validez y condiciones. Estados: borrador → enviada →
   aprobada / rechazada. Se envía por WhatsApp o se imprime en PDF con membrete.
-- **Notas de entrega (NE-0001…)**: se crean solas desde una cotización (botón
-  "→ Nota de entrega") o desde cero. Formato de impresión con firmas de entrega y recibo.
+- **Notas de entrega (NE-0001…)**: se crean solas al concretar una venta, o desde cero.
+  Formato de impresión con firmas de entrega y recibo.
+- **Ventas (V-0001…) — flujo en un solo paso**: cuando el cliente aprueba, tocas
+  "✓ Cliente aprobó — Concretar venta" en la cotización y la app crea **la venta y la
+  nota de entrega automáticamente**, todo vinculado (ya no hay que volver a escribir nada).
+  También hay "Venta directa" para ventas sin cotización previa.
+- **Cobros y cuentas por cobrar**: en cada venta se registran los pagos (efectivo $,
+  efectivo Bs, pago móvil, Zelle, punto, etc.), en USD o en Bs a la tasa del pago.
+  La app calcula lo pagado y el **saldo pendiente**; la venta pasa sola de
+  "por cobrar" → "abonada" → "pagada". La pestaña **Finanzas** muestra el total por
+  cobrar, lo cobrado en el mes y las ventas del mes.
+- **Gastos (G-0001…)**: registro de egresos por categoría (mercancía, flete, servicios,
+  alquiler, nómina…), en USD o Bs, con el total del mes en Finanzas y en Inicio.
 - **Tasa del día**: se cambia tocando el recuadro azul del encabezado o en Ajustes.
 - **Numeración automática** de todos los documentos (contador central en Firestore).
 - Funciona como **app instalable (PWA)** en el teléfono, con carga rápida offline.
@@ -36,8 +47,8 @@ de inventario anterior. Todo se guarda en tiempo real y se comparte entre los so
 3. Ya puedes crear cotizaciones, solicitudes y notas de entrega desde **Inicio**.
 
 > Nota: esta versión usa colecciones nuevas en Firestore (`clientes`, `proveedores`,
-> `productos`, `solicitudes`, `cotizaciones`, `notas`, `config`). Los datos del inventario viejo no
-> se tocan ni se borran; simplemente no se usan.
+> `productos`, `solicitudes`, `cotizaciones`, `notas`, `ventas`, `gastos`, `config`).
+> Los datos del inventario viejo no se tocan ni se borran; simplemente no se usan.
 
 ## Subir a GitHub
 1. Crea un repositorio nuevo en https://github.com/new (por ejemplo `panaven-admin`).
@@ -71,4 +82,4 @@ La configuración de Firebase (incluida la `apiKey`) no es secreta: va en el có
 navegador y es normal que se vea. Lo que protege la base son las **reglas de Firestore**.
 Antes de compartir el enlace público, ajusta las reglas para que solo tus socios puedan
 escribir. Las colecciones que usa esta app son: `clientes`, `proveedores`, `solicitudes`,
-`productos`, `cotizaciones`, `notas` y `config`.
+`productos`, `cotizaciones`, `notas`, `ventas`, `gastos` y `config`.
