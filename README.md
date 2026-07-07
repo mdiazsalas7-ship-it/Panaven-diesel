@@ -5,6 +5,9 @@ de inventario anterior. Todo se guarda en tiempo real y se comparte entre los so
 
 ## Qué hace
 - **Clientes y proveedores**: registro con RIF, teléfono, contacto, dirección y notas.
+- **Catálogo de productos**: código, nombre, unidad, precio USD y existencia. Al escribir
+  una línea en cualquier documento, autocompleta desde el catálogo (rellena precio y unidad).
+  Al marcar una nota de entrega como "entregada" descuenta la existencia automáticamente.
 - **Solicitudes de cotización (SC-0001…)**: pedir precios a un proveedor. Se envía por
   WhatsApp o se imprime.
 - **Cotizaciones (COT-0001…)**: presupuesto a un cliente en USD con equivalente en Bs
@@ -33,7 +36,7 @@ de inventario anterior. Todo se guarda en tiempo real y se comparte entre los so
 3. Ya puedes crear cotizaciones, solicitudes y notas de entrega desde **Inicio**.
 
 > Nota: esta versión usa colecciones nuevas en Firestore (`clientes`, `proveedores`,
-> `solicitudes`, `cotizaciones`, `notas`, `config`). Los datos del inventario viejo no
+> `productos`, `solicitudes`, `cotizaciones`, `notas`, `config`). Los datos del inventario viejo no
 > se tocan ni se borran; simplemente no se usan.
 
 ## Subir a GitHub
@@ -68,4 +71,4 @@ La configuración de Firebase (incluida la `apiKey`) no es secreta: va en el có
 navegador y es normal que se vea. Lo que protege la base son las **reglas de Firestore**.
 Antes de compartir el enlace público, ajusta las reglas para que solo tus socios puedan
 escribir. Las colecciones que usa esta app son: `clientes`, `proveedores`, `solicitudes`,
-`cotizaciones`, `notas` y `config`.
+`productos`, `cotizaciones`, `notas` y `config`.
