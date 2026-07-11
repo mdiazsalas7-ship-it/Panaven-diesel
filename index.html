@@ -11,7 +11,6 @@
 <meta name="theme-color" content="#0f1e3d">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
 :root{
@@ -522,6 +521,14 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
       <label class="f">IVA (%)</label>
       <input class="f" id="cfgIva" type="number" step="0.1" inputmode="decimal" placeholder="16">
       <div class="actions"><button class="btn primary block" onclick="saveEmpresa()">Guardar datos</button></div>
+    </div>
+    <div class="card">
+      <h3 style="font-size:15px; margin-bottom:4px">Respaldo de datos</h3>
+      <p style="color:var(--muted); font-size:13px; margin:0 0 10px">
+        Descarga una copia de toda la información (clientes, productos, cotizaciones, ventas, abonos, gastos) en un archivo.
+        Guárdala en un lugar seguro de vez en cuando.
+      </p>
+      <button class="btn primary block" onclick="exportarRespaldo()">Descargar respaldo completo</button>
     </div>
     <div class="card">
       <h3 style="font-size:15px; margin-bottom:4px">Sesión</h3>
@@ -1448,7 +1455,7 @@ function openVenta(id){
       <div class="r"><span>Fecha</span><b>${fdate(v.fecha)}</b></div>
       ${v.cotizacionNum?`<div class="r"><span>Cotización</span><b>${esc(v.cotizacionNum)}</b></div>`:''}
       ${v.notaNum?`<div class="r"><span>Nota de entrega</span><b>${esc(v.notaNum)}${nota?' · '+nota.estado:''}</b></div>`:''}
-      ${v.orden?`<div class="r"><span>Orden de compra</span><b style="color:var(--brand); cursor:pointer" onclick="verArchivo('${v.orden.url}')">Ver respaldo 📎</b></div>`:''}
+      ${v.orden?`<div class="r"><span>Orden de compra</span><b style="color:var(--brand); cursor:pointer" onclick="verArchivo('${v.orden.fid||''}','${v.orden.url||''}')">Ver respaldo 📎</b></div>`:''}
       ${v.items.map(i=>`<div class="r"><span>${esc(i.desc)} × ${money(i.cant)}</span><b>${usd(i.cant*i.precio)}</b></div>`).join('')}
       <div class="r"><span>Subtotal</span><b>${usd(v.subtotal)}</b></div>
       ${v.conIva?`<div class="r"><span>IVA ${v.ivaPct||16}%</span><b>${usd(v.iva)}</b></div>`:''}
@@ -1474,11 +1481,12 @@ function openVenta(id){
     </div>`);
 }
 
-/* ===================== ARCHIVOS DE RESPALDO (Storage) ===================== */
-const storage = firebase.storage();
+/* ===================== ARCHIVOS DE RESPALDO (en Firestore, plan gratis) =====================
+   Los respaldos (órdenes de compra, comprobantes de pago) se guardan comprimidos
+   como registros de la colección 'archivos'. No requiere Storage ni plan de pago. */
 
-// Comprime fotos antes de subirlas (máx 1400px de lado, JPEG) para ahorrar espacio y datos.
-function comprimirImagen(file, maxLado=1400, calidad=0.82){
+// Comprime la foto a JPEG y la devuelve como dataURL (texto base64)
+function comprimirImagen(file, maxLado, calidad){
   return new Promise((res, rej)=>{
     const img = new Image();
     img.onload = ()=>{
@@ -1488,32 +1496,73 @@ function comprimirImagen(file, maxLado=1400, calidad=0.82){
       c.height = Math.round(img.height*escala);
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(img.src);
-      c.toBlob(b=> b ? res(b) : rej(new Error('No se pudo procesar la foto')), 'image/jpeg', calidad);
+      res(c.toDataURL('image/jpeg', calidad));
     };
     img.onerror = ()=> rej(new Error('No se pudo leer la foto'));
     img.src = URL.createObjectURL(file);
   });
 }
+function leerDataURL(file){
+  return new Promise((res, rej)=>{
+    const r = new FileReader();
+    r.onload = ()=> res(r.result);
+    r.onerror = ()=> rej(new Error('No se pudo leer el archivo'));
+    r.readAsDataURL(file);
+  });
+}
+// Reintenta con más compresión hasta caber en un documento de Firestore (límite 1 MB)
+const LIMITE_DATA = 700000; // ~700 KB de texto base64
+async function comprimirHastaCaber(file){
+  const intentos = [[1400,0.8],[1100,0.7],[900,0.6],[750,0.5],[600,0.45]];
+  for(const [lado, cal] of intentos){
+    const url = await comprimirImagen(file, lado, cal);
+    if(url.length <= LIMITE_DATA) return url;
+  }
+  throw new Error('La foto es demasiado pesada incluso comprimida. Intenta con una captura de pantalla.');
+}
 
-// Sube foto (comprimida) o PDF y devuelve {url, tipo, nombre, ruta}
-async function subirArchivo(file, ruta){
+// Guarda foto (comprimida) o PDF liviano; devuelve {fid, tipo, nombre}
+async function subirArchivo(file, ref){
   if(!file) return null;
-  if(file.size > 15*1024*1024) throw new Error('El archivo pesa más de 15 MB');
-  let blob, ext, tipo;
+  let dataURL, tipo;
   if(file.type.startsWith('image/')){
-    blob = await comprimirImagen(file); ext='jpg'; tipo='imagen';
+    tipo = 'imagen';
+    dataURL = await comprimirHastaCaber(file);
   } else if(file.type === 'application/pdf'){
-    blob = file; ext='pdf'; tipo='pdf';
+    tipo = 'pdf';
+    if(file.size > 500*1024) throw new Error('El PDF pesa más de 500 KB. Mejor tómale una foto o captura al documento.');
+    dataURL = await leerDataURL(file);
   } else {
     throw new Error('Solo se aceptan fotos o PDF');
   }
-  const ref = storage.ref(ruta+'.'+ext);
-  await ref.put(blob, {contentType: tipo==='pdf' ? 'application/pdf' : 'image/jpeg'});
-  const url = await ref.getDownloadURL();
-  return {url, tipo, nombre: file.name || ('respaldo.'+ext), ruta: ref.fullPath};
+  const doc = await db.collection('archivos').add({
+    data: dataURL, tipo, nombre: file.name || 'respaldo', ref: ref || '',
+    creado: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  return {fid: doc.id, tipo, nombre: file.name || 'respaldo'};
 }
 
-function verArchivo(url){ window.open(url, '_blank'); }
+// Abre un respaldo: imagen en modal, PDF en pestaña nueva.
+// Acepta fid (nuevo) o url directa (compatibilidad).
+async function verArchivo(fid, url){
+  try{
+    if(!fid && url) return window.open(url, '_blank');
+    toast('Abriendo respaldo…');
+    const d = await db.collection('archivos').doc(fid).get();
+    if(!d.exists) return toast('El respaldo no se encontró', true);
+    const a = d.data();
+    if(a.tipo === 'imagen'){
+      openModal(modalHead('Respaldo', a.nombre || '') +
+        `<img src="${a.data}" alt="Respaldo" style="width:100%; border:1px solid var(--line); border-radius:12px; background:#f6f7f9">`);
+    } else {
+      const blob = await (await fetch(a.data)).blob();
+      window.open(URL.createObjectURL(blob), '_blank');
+    }
+  }catch(e){ console.error('verArchivo', e); toast('No se pudo abrir el respaldo', true); }
+}
+function borrarArchivo(fid){
+  if(fid) db.collection('archivos').doc(fid).delete().catch(()=>{});
+}
 
 /* ===================== ABONOS / PAGOS ===================== */
 const r2 = n => Math.round((Number(n)||0)*100)/100;
@@ -1647,12 +1696,8 @@ function openPago(vid, pid){
       ${p.ref?`<div class="r"><span>Referencia</span><b>${esc(p.ref)}</b></div>`:''}
       ${p.notas?`<div class="r"><span>Nota</span><b>${esc(p.notas)}</b></div>`:''}
     </div>
-    ${p.comp ? (p.comp.tipo==='imagen'
-      ? `<label class="f">Comprobante (toca para ampliar)</label>
-         <img src="${p.comp.url}" alt="Comprobante" loading="lazy"
-           style="width:100%; max-height:340px; object-fit:contain; border:1px solid var(--line); border-radius:12px; cursor:pointer; background:#f6f7f9"
-           onclick="verArchivo('${p.comp.url}')">`
-      : `<button class="btn ghost block" style="margin-top:8px" onclick="verArchivo('${p.comp.url}')">Ver comprobante (PDF) 📎</button>`)
+    ${p.comp
+      ? `<button class="btn ghost block" style="margin-top:8px" onclick="verArchivo('${p.comp.fid||''}','${p.comp.url||''}')">Ver comprobante del pago 📎</button>`
       : `<p style="color:var(--muted); font-size:12px; margin:8px 0 0">Este abono no tiene comprobante adjunto.</p>`}
     <div class="doc-actions">
       <button class="btn ghost" onclick="printRecibo('${vid}','${pid}')">Imprimir / PDF</button>
@@ -1679,9 +1724,7 @@ async function delAbono(vid, pid){
         actualizado: firebase.firestore.FieldValue.serverTimestamp()});
     });
     toast('Abono eliminado');
-    if(pagoLocal?.comp?.ruta){
-      storage.ref(pagoLocal.comp.ruta).delete().catch(()=>{}); // limpieza del archivo (no crítica)
-    }
+    if(pagoLocal?.comp?.fid) borrarArchivo(pagoLocal.comp.fid); // limpieza (no crítica)
     setTimeout(()=> openVenta(vid), 200);
   }catch(e){ console.error('delAbono', e); toast('No se pudo eliminar el abono', true); }
 }
@@ -2100,6 +2143,28 @@ function renderVentas(){
   const l = S.ventas.filter(d=>matches(d,q)).sort(byDate);
   box.innerHTML = l.length ? l.map(d=>docRow(d,'vta')).join('')
     : `<div class="empty">No hay ventas${q?' que coincidan':' todavía'}. Abre una cotización y pulsa <b>Registrar venta</b>.</div>`;
+}
+
+/* ===================== RESPALDO DE DATOS ===================== */
+function exportarRespaldo(){
+  const data = {
+    sistema: 'Panaven Administración',
+    exportado: new Date().toISOString(),
+    config: S.config,
+    clientes: S.clientes, proveedores: S.proveedores, productos: S.productos,
+    solicitudes: S.solicitudes, cotizaciones: S.cotizaciones, notas: S.notas,
+    ventas: S.ventas, gastos: S.gastos
+  };
+  // Las fechas de Firestore se convierten a texto legible
+  const json = JSON.stringify(data, function(key){
+    const v = this[key];
+    return (v && typeof v.toDate === 'function') ? v.toDate().toISOString() : v;
+  }, 2);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([json], {type:'application/json'}));
+  a.download = 'panaven-respaldo-'+hoyISO()+'.json';
+  a.click();
+  toast('Respaldo descargado: guárdalo en un lugar seguro');
 }
 
 /* ===================== REPORTE DEL MES ===================== */
