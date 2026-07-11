@@ -326,7 +326,7 @@ textarea.f{resize:vertical; min-height:64px}
       <div class="stat" onclick="go('cotizar');setSubTab('cotizar','cotizaciones')">
         <small>Cotizaciones</small><b id="stCotiz">0</b><span class="sub" id="stCotizSub">—</span>
       </div>
-      <div class="stat" onclick="go('entregas')">
+      <div class="stat" onclick="go('cotizar');setSubTab('cotizar','entregas')">
         <small>Notas de entrega</small><b id="stNotas">0</b><span class="sub" id="stNotasSub">—</span>
       </div>
     </div>
@@ -375,6 +375,7 @@ textarea.f{resize:vertical; min-height:64px}
     <div class="tabs" id="tabs-cotizar">
       <button data-sub="cotizaciones" class="active" onclick="setSubTab('cotizar','cotizaciones')">Cotizaciones</button>
       <button data-sub="solicitudes" onclick="setSubTab('cotizar','solicitudes')">Solicitudes</button>
+      <button data-sub="entregas" onclick="setSubTab('cotizar','entregas')">Entregas</button>
     </div>
     <div class="fab-row">
       <button class="btn primary block" id="btnNewDoc" onclick="newDocFromTab()">+ Nueva cotización</button>
@@ -386,22 +387,13 @@ textarea.f{resize:vertical; min-height:64px}
     <div id="listCotizar"></div>
   </section>
 
-  <!-- ============ ENTREGAS ============ -->
-  <section id="view-entregas" style="display:none">
-    <div class="section-title"><h2>Notas de entrega</h2></div>
-    <div class="fab-row">
-      <button class="btn primary block" onclick="newNota()">+ Nueva nota de entrega</button>
-    </div>
-    <div class="search">
-      <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input id="qNotas" placeholder="Buscar por número o cliente…" oninput="renderNotas()">
-    </div>
-    <div id="listNotas"></div>
-  </section>
-
   <!-- ============ VENTAS ============ -->
   <section id="view-ventas" style="display:none">
     <div class="section-title"><h2>Ventas</h2><small id="ventasResumen"></small></div>
+    <div class="tabs" id="tabs-ventas">
+      <button data-sub="ventas" class="active" onclick="setSubTab('ventas','ventas')">Ventas</button>
+      <button data-sub="porcobrar" onclick="setSubTab('ventas','porcobrar')">Por cobrar</button>
+    </div>
     <div class="search">
       <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input id="qVentas" placeholder="Buscar por número o cliente…" oninput="renderVentas()">
@@ -410,6 +402,19 @@ textarea.f{resize:vertical; min-height:64px}
     <p style="text-align:center; color:var(--muted); font-size:12px; margin-top:14px">
       Las ventas nacen del botón <b>Registrar venta</b> dentro de una cotización.
     </p>
+  </section>
+
+  <!-- ============ GASTOS ============ -->
+  <section id="view-gastos" style="display:none">
+    <div class="section-title"><h2>Gastos</h2><small id="gastosResumen"></small></div>
+    <div class="fab-row">
+      <button class="btn primary block" onclick="gastoForm()">+ Registrar gasto</button>
+    </div>
+    <div class="search">
+      <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="qGastos" placeholder="Buscar por descripción o categoría…" oninput="renderGastos()">
+    </div>
+    <div id="listGastos"></div>
   </section>
 
   <!-- ============ AJUSTES ============ -->
@@ -460,8 +465,8 @@ textarea.f{resize:vertical; min-height:64px}
   <button id="nav-cotizar" onclick="go('cotizar')">
     <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v4h4"/><path d="M10 12h6M10 16h6"/></svg>Cotizar
   </button>
-  <button id="nav-entregas" onclick="go('entregas')">
-    <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><path d="M3 7h11v10H3z"/><path d="M14 10h4l3 3v4h-7"/><circle cx="7" cy="18.5" r="1.8"/><circle cx="17.5" cy="18.5" r="1.8"/></svg>Entregas
+  <button id="nav-gastos" onclick="go('gastos')">
+    <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4h13l3 4v12H4z"/><path d="M4 8h16"/><path d="M9 13h6M9 16.5h4"/></svg>Gastos
   </button>
   <button id="nav-ventas" onclick="go('ventas')">
     <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9v6M18 9v6"/></svg>Ventas
@@ -501,10 +506,10 @@ const LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA+gAAACyCAMAAADmgBXa
 /* ===================== ESTADO ===================== */
 const S = {
   clientes: [], proveedores: [], productos: [],
-  solicitudes: [], cotizaciones: [], notas: [], ventas: [],
+  solicitudes: [], cotizaciones: [], notas: [], ventas: [], gastos: [],
   config: { tasa: 0, empresa: {nombre:'Panaven', rif:'', tel:'', dir:''}, iva: 16 },
   view: 'inicio',
-  sub: { contactos:'clientes', cotizar:'cotizaciones' },
+  sub: { contactos:'clientes', cotizar:'cotizaciones', ventas:'ventas' },
   editLines: []   // líneas del documento en edición
 };
 
@@ -541,7 +546,7 @@ function modalHead(title, sub){
 /* ===================== NAVEGACIÓN ===================== */
 function go(view){
   S.view = view;
-  ['inicio','contactos','productos','cotizar','entregas','ventas','ajustes'].forEach(v=>{
+  ['inicio','contactos','productos','cotizar','ventas','gastos','ajustes'].forEach(v=>{
     $('view-'+v).style.display = v===view ? '' : 'none';
     $('nav-'+v).classList.toggle('active', v===view);
   });
@@ -554,12 +559,18 @@ function setSubTab(group, sub){
   if(group==='contactos'){
     $('btnNewContacto').textContent = sub==='clientes' ? '+ Registrar cliente' : '+ Registrar proveedor';
     renderContactos();
-  } else {
-    $('btnNewDoc').textContent = sub==='cotizaciones' ? '+ Nueva cotización' : '+ Nueva solicitud a proveedor';
+  } else if(group==='cotizar'){
+    $('btnNewDoc').textContent = sub==='cotizaciones' ? '+ Nueva cotización'
+      : sub==='solicitudes' ? '+ Nueva solicitud a proveedor' : '+ Nueva nota de entrega';
     renderCotizar();
+  } else {
+    renderVentas();
   }
 }
-function newDocFromTab(){ S.sub.cotizar==='cotizaciones' ? newCotizacion() : newSolicitud(); }
+function newDocFromTab(){
+  const s = S.sub.cotizar;
+  s==='cotizaciones' ? newCotizacion() : s==='solicitudes' ? newSolicitud() : newNota();
+}
 
 /* ===================== SUSCRIPCIONES ===================== */
 function listen(col, key, cb){
@@ -576,6 +587,7 @@ listen('solicitudes','solicitudes');
 listen('cotizaciones','cotizaciones');
 listen('notas','notas');
 listen('ventas','ventas');
+listen('gastos','gastos');
 
 db.collection('config').doc('general').onSnapshot(d=>{
   if(d.exists){
@@ -1165,6 +1177,30 @@ function openNota(id){
 }
 
 /* ===================== VENTAS ===================== */
+// Numeración de ventas: respeta la serie que ya exista en la base de datos.
+// Si las ventas viejas son "V-0002", las nuevas siguen "V-0003" (no "VTA-").
+function ventaPrefix(){
+  const con = S.ventas.map(v=>String(v.numero||'').match(/^([A-Za-z]+)-/)).filter(Boolean);
+  return con.length ? con[con.length-1][1] : 'V';
+}
+function maxVentaNum(){
+  return S.ventas.reduce((mx,v)=>{
+    const m = String(v.numero||'').match(/(\d+)\s*$/);
+    return Math.max(mx, m ? parseInt(m[1],10) : 0);
+  }, 0);
+}
+async function nextVentaNumber(){
+  const ref = db.collection('config').doc('counters');
+  const floor = maxVentaNum(); // nunca por debajo de lo que ya existe
+  const n = await db.runTransaction(async t=>{
+    const d = await t.get(ref);
+    const cur = Math.max((d.exists && d.data().vta) || 0, floor);
+    t.set(ref, {vta: cur+1}, {merge:true});
+    return cur+1;
+  });
+  return ventaPrefix() + '-' + String(n).padStart(4,'0');
+}
+
 // Registrar venta: nace de una cotización. Crea la VENTA y su NOTA DE ENTREGA
 // de un solo golpe (batch atómico) y enlaza todo con la cotización de origen.
 async function registrarVenta(cotId){
@@ -1175,7 +1211,7 @@ async function registrarVenta(cotId){
   if(!c.items || !c.items.length) return toast('La cotización no tiene artículos', true);
   if(!confirm(`¿Registrar la venta de la cotización ${c.numero} por ${usd(c.total)}?\n\nSe creará la venta y, automáticamente, su nota de entrega.`)) return;
   try{
-    const ventaNum = await nextNumber('vta');
+    const ventaNum = await nextVentaNumber();
     const notaNum  = await nextNumber('ne');
     const ventaRef = db.collection('ventas').doc();
     const notaRef  = db.collection('notas').doc();
@@ -1288,7 +1324,7 @@ function abonoForm(vid){
     <label class="f">Monto recibido *</label>
     <input class="f" id="aMonto" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" oninput="abonoPreview()">
     <label class="f">Tasa Bs/USD (para convertir)</label>
-    <input class="f" id="aTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${v.tasa||S.config.tasa||''}" oninput="abonoPreview()">
+    <input class="f" id="aTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${S.config.tasa||v.tasa||''}" oninput="abonoPreview()">
     <label class="f">Referencia / № de operación</label>
     <input class="f" id="aRef" placeholder="Ej. 00123456 (opcional)">
     <label class="f">Nota</label>
@@ -1517,6 +1553,127 @@ function waSend(tel, txt){
   window.open(base + '?text=' + encodeURIComponent(txt), '_blank');
 }
 
+/* ===================== GASTOS ===================== */
+const CATEGORIAS_GASTO = ['Compra de mercancía','Alquiler','Servicios (luz, agua, internet)','Sueldos y pagos a personal','Transporte y envíos','Impuestos y tasas','Mantenimiento','Otros'];
+
+const hoyISO = () => {
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+};
+
+function gastoForm(g){
+  openModal(modalHead(g ? 'Editar gasto' : 'Registrar gasto', 'Dinero que sale del negocio.') + `
+    <label class="f">Fecha *</label>
+    <input class="f" id="gFecha" type="date" value="${g ? (g.fechaISO||hoyISO()) : hoyISO()}">
+    <label class="f">Categoría</label>
+    <select class="f" id="gCat">
+      ${CATEGORIAS_GASTO.map(c=>`<option ${g&&g.categoria===c?'selected':''}>${c}</option>`).join('')}
+    </select>
+    <label class="f">Descripción *</label>
+    <input class="f" id="gDesc" value="${esc(g?.desc||'')}" placeholder="Ej. Flete de repuestos desde Valencia">
+    <label class="f">Moneda</label>
+    <select class="f" id="gMoneda" onchange="gastoPreview()">
+      <option value="USD" ${g?.moneda!=='Bs'?'selected':''}>Dólares (USD)</option>
+      <option value="Bs" ${g?.moneda==='Bs'?'selected':''}>Bolívares (Bs)</option>
+    </select>
+    <label class="f">Monto *</label>
+    <input class="f" id="gMonto" type="number" inputmode="decimal" min="0" step="0.01" value="${g?g.monto:''}" placeholder="0.00" oninput="gastoPreview()">
+    <label class="f">Tasa Bs/USD (para convertir)</label>
+    <input class="f" id="gTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${g?.tasa||S.config.tasa||''}" oninput="gastoPreview()">
+    <label class="f">Método de pago</label>
+    <select class="f" id="gMetodo">
+      ${METODOS.map(m=>`<option ${g&&g.metodo===m?'selected':''}>${m}</option>`).join('')}
+    </select>
+    <div class="dl" id="gPreview"></div>
+    <div class="actions">
+      <button class="btn primary block" onclick="saveGasto('${g?g.id:''}')">${g?'Guardar cambios':'Registrar gasto'}</button>
+    </div>`);
+  gastoPreview();
+}
+function gastoPreview(){
+  const box = $('gPreview'); if(!box) return;
+  const monto = num($('gMonto').value);
+  const moneda = $('gMoneda').value;
+  const tasa = num($('gTasa').value) || S.config.tasa || 0;
+  if(monto<=0){ box.innerHTML=''; return; }
+  const usdVal = moneda==='Bs' ? (tasa>0 ? monto/tasa : 0) : monto;
+  box.innerHTML = `<div class="r"><span>Equivale a</span><b>${usd(usdVal)}${moneda==='Bs'&&tasa<=0?' — falta la tasa':''}</b></div>`;
+}
+
+async function saveGasto(id){
+  const desc = $('gDesc').value.trim();
+  if(!desc) return toast('Escribe la descripción del gasto', true);
+  const monto = num($('gMonto').value);
+  if(monto<=0) return toast('Indica el monto', true);
+  const moneda = $('gMoneda').value;
+  const tasa = num($('gTasa').value) || S.config.tasa || 0;
+  if(moneda==='Bs' && tasa<=0) return toast('Indica la tasa Bs/USD para convertir', true);
+  const fechaISO = $('gFecha').value || hoyISO();
+  const [y,m,d] = fechaISO.split('-').map(Number);
+  const data = {
+    fechaISO,
+    fecha: firebase.firestore.Timestamp.fromDate(new Date(y, m-1, d, 12)), // mediodía: evita brincos de zona horaria
+    categoria: $('gCat').value, desc,
+    moneda, monto: r2(monto), tasa: r2(tasa),
+    montoUsd: r2(moneda==='Bs' ? monto/tasa : monto),
+    metodo: $('gMetodo').value,
+    actualizado: firebase.firestore.FieldValue.serverTimestamp()
+  };
+  try{
+    if(id){ await db.collection('gastos').doc(id).update(data); }
+    else { data.creado = firebase.firestore.FieldValue.serverTimestamp();
+           await db.collection('gastos').add(data); }
+    closeModal(); toast(id?'Gasto actualizado':'Gasto registrado');
+  }catch(e){ console.error('saveGasto', e); toast('No se pudo guardar el gasto', true); }
+}
+
+function openGasto(id){
+  const g = S.gastos.find(x=>x.id===id); if(!g) return;
+  openModal(modalHead('Gasto', g.categoria||'') + `
+    <div class="dl">
+      <div class="r"><span>Fecha</span><b>${fdate(g.fecha)}</b></div>
+      <div class="r"><span>Descripción</span><b>${esc(g.desc)}</b></div>
+      <div class="r"><span>Pagado</span><b>${g.moneda==='Bs'?bs(g.monto):usd(g.monto)}</b></div>
+      ${g.moneda==='Bs'?`<div class="r"><span>Tasa</span><b>${money(g.tasa)}</b></div>`:''}
+      <div class="r"><span><b>Equivalente USD</b></span><b>${usd(g.montoUsd)}</b></div>
+      <div class="r"><span>Método</span><b>${esc(g.metodo||'—')}</b></div>
+    </div>
+    <div class="doc-actions">
+      <button class="btn ghost" onclick="gastoForm(S.gastos.find(x=>x.id==='${id}'))">Editar</button>
+      <button class="btn danger" onclick="delGasto('${id}')">Eliminar</button>
+    </div>`);
+}
+async function delGasto(id){
+  if(!confirm('¿Eliminar este gasto definitivamente?')) return;
+  await db.collection('gastos').doc(id).delete();
+  closeModal(); toast('Gasto eliminado');
+}
+
+function renderGastos(){
+  const box = $('listGastos'); if(!box) return;
+  const q = ($('qGastos')?.value||'').toLowerCase();
+  // Total del mes en curso
+  const mesAct = hoyISO().slice(0,7); // 'YYYY-MM'
+  const totalMes = S.gastos
+    .filter(g=> (g.fechaISO||'').startsWith(mesAct))
+    .reduce((s,g)=> s + (g.montoUsd||0), 0);
+  const chip = $('gastosResumen');
+  if(chip) chip.textContent = totalMes>0 ? 'Este mes: '+usd(totalMes) : '';
+
+  const l = S.gastos
+    .filter(g=> !q || [g.desc,g.categoria,g.metodo].join(' ').toLowerCase().includes(q))
+    .sort(byDate);
+  box.innerHTML = l.length ? l.map(g=>`
+    <div class="item-row" onclick="openGasto('${g.id}')">
+      <div class="avatar prov">${esc((g.categoria||'?').charAt(0))}</div>
+      <div class="info"><b>${esc(g.desc)}</b>
+        <small>${fdate(g.fecha)} · ${esc(g.categoria||'')}</small></div>
+      <div class="right"><b>${usd(g.montoUsd)}</b>
+        ${g.moneda==='Bs'?`<small>${bs(g.monto)}</small>`:''}</div>
+    </div>`).join('')
+    : `<div class="empty">No hay gastos${q?' que coincidan':' registrados este período'}. Registra el primero con el botón de arriba.</div>`;
+}
+
 /* ===================== IMPRESIÓN ===================== */
 function printHeader(titulo, numero, extra){
   const e = S.config.empresa;
@@ -1622,32 +1779,55 @@ function renderCotizar(){
     const l = S.cotizaciones.filter(d=>matches(d,q)).sort(byDate);
     box.innerHTML = l.length ? l.map(d=>docRow(d,'cot')).join('')
       : `<div class="empty">No hay cotizaciones${q?' que coincidan':''}. Crea la primera con el botón de arriba.</div>`;
-  } else {
+  } else if(S.sub.cotizar==='solicitudes'){
     const l = S.solicitudes.filter(d=>matches(d,q)).sort(byDate);
     box.innerHTML = l.length ? l.map(d=>docRow(d,'sol')).join('')
       : `<div class="empty">No hay solicitudes a proveedores${q?' que coincidan':''}.</div>`;
+  } else {
+    const l = S.notas.filter(d=>matches(d,q)).sort(byDate);
+    box.innerHTML = l.length ? l.map(d=>docRow(d,'ne')).join('')
+      : `<div class="empty">No hay notas de entrega${q?' que coincidan':''}.</div>`;
   }
-}
-
-function renderNotas(){
-  const q = ($('qNotas').value||'').toLowerCase();
-  const l = S.notas.filter(d=>matches(d,q)).sort(byDate);
-  $('listNotas').innerHTML = l.length ? l.map(d=>docRow(d,'ne')).join('')
-    : `<div class="empty">No hay notas de entrega${q?' que coincidan':''}.</div>`;
 }
 
 function renderVentas(){
   const q = ($('qVentas')?.value||'').toLowerCase();
-  const l = S.ventas.filter(d=>matches(d,q)).sort(byDate);
   const box = $('listVentas'); if(!box) return;
-  box.innerHTML = l.length ? l.map(d=>docRow(d,'vta')).join('')
-    : `<div class="empty">No hay ventas${q?' que coincidan':' todavía'}. Abre una cotización y pulsa <b>Registrar venta</b>.</div>`;
-  // Resumen: total por cobrar (saldo de ventas activas)
+  // Chip superior: total por cobrar (saldo de ventas activas)
   const porCobrar = S.ventas
     .filter(v=>v.estado!=='anulada')
     .reduce((s,v)=> s + (v.saldo!=null?v.saldo:v.total), 0);
   const chip = $('ventasResumen');
   if(chip) chip.textContent = porCobrar>0 ? 'Por cobrar: '+usd(porCobrar) : (S.ventas.length?'todo cobrado':'');
+
+  if(S.sub.ventas==='porcobrar'){
+    // Deudas agrupadas por cliente, de mayor a menor
+    const deudas = S.ventas.filter(v=> v.estado!=='anulada'
+      && (v.saldo!=null?v.saldo:v.total) > 0.009 && matches(v,q));
+    if(!deudas.length){
+      box.innerHTML = `<div class="empty">${q?'Nada coincide con la búsqueda.':'¡No hay cuentas por cobrar! Todo está cobrado. 🎉'}</div>`;
+      return;
+    }
+    const grupos = {};
+    deudas.forEach(v=>{
+      const k = v.contactoId || v.contactoNombre || '?';
+      (grupos[k] = grupos[k] || {nombre: v.contactoNombre||'—', ventas: [], total: 0});
+      grupos[k].ventas.push(v);
+      grupos[k].total += (v.saldo!=null?v.saldo:v.total);
+    });
+    box.innerHTML = Object.values(grupos)
+      .sort((a,b)=> b.total - a.total)
+      .map(g=>`
+        <div class="section-title" style="margin-top:14px">
+          <h2 style="font-size:14.5px">${esc(g.nombre)}</h2>
+          <small style="color:var(--warn)">debe ${usd(g.total)}</small>
+        </div>
+        ${g.ventas.sort(byDate).map(v=>docRow(v,'vta')).join('')}`).join('');
+    return;
+  }
+  const l = S.ventas.filter(d=>matches(d,q)).sort(byDate);
+  box.innerHTML = l.length ? l.map(d=>docRow(d,'vta')).join('')
+    : `<div class="empty">No hay ventas${q?' que coincidan':' todavía'}. Abre una cotización y pulsa <b>Registrar venta</b>.</div>`;
 }
 
 function renderInicio(){
@@ -1676,8 +1856,8 @@ function renderAll(){
   renderProductos();
   updateProdDatalist();
   renderCotizar();
-  renderNotas();
   renderVentas();
+  renderGastos();
 }
 
 /* ===================== SERVICE WORKER ===================== */
