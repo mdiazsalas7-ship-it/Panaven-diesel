@@ -632,7 +632,7 @@ async function nextNumber(tipo){ // 'cot' | 'sol' | 'ne'
     t.set(ref, {[tipo]: cur+1}, {merge:true});
     return cur+1;
   });
-  const pref = {cot:'COT', sol:'SC', ne:'NE', vta:'VTA'}[tipo];
+  const pref = {cot:'COT', sol:'SC', ne:'NE', vta:'VTA', rec:'REC'}[tipo];
   return pref + '-' + String(n).padStart(4,'0');
 }
 
@@ -1246,10 +1246,180 @@ function openVenta(id){
       <div class="r"><span>Abonado</span><b>${usd(v.abonado||0)}</b></div>
       <div class="r"><span><b>Saldo pendiente</b></span><b>${usd(v.saldo!=null?v.saldo:v.total)}</b></div>
     </div>
+    ${(v.pagos&&v.pagos.length)?`
+    <label class="f">Abonos (toca uno para ver su recibo)</label>
+    <div class="dl">
+      ${v.pagos.map(p=>`<div class="r" style="cursor:pointer" onclick="openPago('${id}','${p.id}')">
+        <span>${esc(p.numero||'')} · ${fdate(p.fecha)} · ${esc(p.metodo)}</span>
+        <b>${usd(p.montoUsd)}</b></div>`).join('')}
+    </div>`:''}
     <div class="doc-actions">
+      ${(v.estado!=='anulada' && (v.saldo!=null?v.saldo:v.total)>0.009)
+        ? `<button class="btn primary" style="grid-column:1/-1" onclick="abonoForm('${id}')">Registrar abono</button>`:''}
       <button class="btn ghost" onclick="printVenta('${id}')">Imprimir / PDF</button>
       ${v.notaId?`<button class="btn ghost" onclick="openNota('${v.notaId}')">Ver nota de entrega</button>`:''}
       ${v.estado!=='anulada'?`<button class="btn danger" style="grid-column:1/-1" onclick="anularVenta('${id}')">Anular venta</button>`:''}
+    </div>`);
+}
+
+/* ===================== ABONOS / PAGOS ===================== */
+const r2 = n => Math.round((Number(n)||0)*100)/100;
+const METODOS = ['Efectivo USD','Efectivo Bs','Pago móvil','Transferencia','Zelle','Punto de venta'];
+// Métodos que normalmente entran en bolívares (preseleccionan la moneda Bs)
+const METODOS_BS = ['Efectivo Bs','Pago móvil','Transferencia','Punto de venta'];
+
+function abonoForm(vid){
+  const v = S.ventas.find(x=>x.id===vid); if(!v) return;
+  const saldo = v.saldo!=null ? v.saldo : v.total;
+  openModal(modalHead('Registrar abono', 'Venta '+v.numero+' · '+(v.contactoNombre||'')) + `
+    <div class="dl">
+      <div class="r"><span>Total de la venta</span><b>${usd(v.total)}</b></div>
+      <div class="r"><span><b>Saldo pendiente</b></span><b>${usd(saldo)}</b></div>
+    </div>
+    <label class="f">Método de pago *</label>
+    <select class="f" id="aMetodo" onchange="abonoMetodoChange()">
+      ${METODOS.map(m=>`<option>${m}</option>`).join('')}
+    </select>
+    <label class="f">Moneda del monto recibido</label>
+    <select class="f" id="aMoneda" onchange="abonoPreview()">
+      <option value="USD">Dólares (USD)</option>
+      <option value="Bs">Bolívares (Bs)</option>
+    </select>
+    <label class="f">Monto recibido *</label>
+    <input class="f" id="aMonto" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" oninput="abonoPreview()">
+    <label class="f">Tasa Bs/USD (para convertir)</label>
+    <input class="f" id="aTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${v.tasa||S.config.tasa||''}" oninput="abonoPreview()">
+    <label class="f">Referencia / № de operación</label>
+    <input class="f" id="aRef" placeholder="Ej. 00123456 (opcional)">
+    <label class="f">Nota</label>
+    <input class="f" id="aNotas" placeholder="Opcional">
+    <div class="dl" id="aPreview"></div>
+    <div class="actions">
+      <button class="btn primary block" onclick="saveAbono('${vid}')">Guardar abono</button>
+    </div>`);
+  abonoPreview();
+}
+function abonoMetodoChange(){
+  const m = $('aMetodo').value;
+  $('aMoneda').value = METODOS_BS.includes(m) ? 'Bs' : 'USD';
+  abonoPreview();
+}
+function abonoPreview(){
+  const box = $('aPreview'); if(!box) return;
+  const monto = num($('aMonto').value);
+  const moneda = $('aMoneda').value;
+  const tasa = num($('aTasa').value) || S.config.tasa || 0;
+  if(monto<=0){ box.innerHTML=''; return; }
+  const usdVal = moneda==='Bs' ? (tasa>0 ? monto/tasa : 0) : monto;
+  box.innerHTML = `<div class="r"><span>Equivale a</span><b>${usd(usdVal)}${moneda==='Bs'&&tasa<=0?' — falta la tasa':''}</b></div>`;
+}
+
+async function saveAbono(vid){
+  const monto = num($('aMonto').value);
+  if(monto<=0) return toast('Indica el monto recibido', true);
+  const moneda = $('aMoneda').value;
+  const tasa = num($('aTasa').value) || S.config.tasa || 0;
+  if(moneda==='Bs' && tasa<=0) return toast('Indica la tasa Bs/USD para convertir', true);
+  const montoUsd = r2(moneda==='Bs' ? monto/tasa : monto);
+  const montoBs  = r2(moneda==='Bs' ? monto : (tasa ? monto*tasa : 0));
+  const vLocal = S.ventas.find(x=>x.id===vid);
+  const saldoLocal = vLocal ? (vLocal.saldo!=null?vLocal.saldo:vLocal.total) : 0;
+  if(montoUsd > saldoLocal + 0.009 &&
+     !confirm(`El abono (${usd(montoUsd)}) supera el saldo (${usd(saldoLocal)}). ¿Registrarlo igual?`)) return;
+
+  const pago = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    numero: await nextNumber('rec'),
+    fecha: firebase.firestore.Timestamp.now(),
+    metodo: $('aMetodo').value,
+    moneda, monto: r2(monto), tasa: moneda==='Bs'||tasa? r2(tasa):0,
+    montoUsd, montoBs,
+    ref: $('aRef').value.trim(), notas: $('aNotas').value.trim()
+  };
+  const ref = db.collection('ventas').doc(vid);
+  try{
+    await db.runTransaction(async t=>{
+      const d = await t.get(ref);
+      if(!d.exists) throw new Error('Venta no encontrada');
+      const v = d.data();
+      if(v.estado==='anulada') throw new Error('La venta está anulada');
+      const pagos = [...(v.pagos||[]), pago];
+      const abonado = r2(pagos.reduce((s,p)=> s + (p.montoUsd||0), 0));
+      const saldo = Math.max(r2(v.total - abonado), 0);
+      const estadoPago = saldo<=0.009 ? 'pagada' : (abonado>0 ? 'abonada' : 'pendiente');
+      t.update(ref, {pagos, abonado, saldo, estadoPago,
+        actualizado: firebase.firestore.FieldValue.serverTimestamp()});
+    });
+    closeModal();
+    toast('Abono '+pago.numero+' registrado');
+    setTimeout(()=> openVenta(vid), 200);
+  }catch(e){ console.error('saveAbono', e); toast(e.message||'No se pudo registrar el abono', true); }
+}
+
+function openPago(vid, pid){
+  const v = S.ventas.find(x=>x.id===vid); if(!v) return;
+  const p = (v.pagos||[]).find(x=>x.id===pid); if(!p) return;
+  openModal(modalHead('Recibo '+(p.numero||''), 'Venta '+v.numero+' · '+(v.contactoNombre||'')) + `
+    <div class="dl">
+      <div class="r"><span>Fecha</span><b>${fdate(p.fecha)}</b></div>
+      <div class="r"><span>Método</span><b>${esc(p.metodo)}</b></div>
+      <div class="r"><span>Recibido</span><b>${p.moneda==='Bs'?bs(p.monto):usd(p.monto)}</b></div>
+      ${p.moneda==='Bs'?`<div class="r"><span>Tasa</span><b>${money(p.tasa)}</b></div>`:''}
+      <div class="r"><span><b>Equivalente USD</b></span><b>${usd(p.montoUsd)}</b></div>
+      ${p.ref?`<div class="r"><span>Referencia</span><b>${esc(p.ref)}</b></div>`:''}
+      ${p.notas?`<div class="r"><span>Nota</span><b>${esc(p.notas)}</b></div>`:''}
+    </div>
+    <div class="doc-actions">
+      <button class="btn ghost" onclick="printRecibo('${vid}','${pid}')">Imprimir / PDF</button>
+      <button class="btn ghost" onclick="openVenta('${vid}')">Volver a la venta</button>
+      <button class="btn danger" style="grid-column:1/-1" onclick="delAbono('${vid}','${pid}')">Eliminar abono</button>
+    </div>`);
+}
+
+async function delAbono(vid, pid){
+  if(!confirm('¿Eliminar este abono? El saldo de la venta se recalculará.')) return;
+  const ref = db.collection('ventas').doc(vid);
+  try{
+    await db.runTransaction(async t=>{
+      const d = await t.get(ref);
+      if(!d.exists) throw new Error('Venta no encontrada');
+      const v = d.data();
+      const pagos = (v.pagos||[]).filter(p=>p.id!==pid);
+      const abonado = r2(pagos.reduce((s,p)=> s + (p.montoUsd||0), 0));
+      const saldo = Math.max(r2(v.total - abonado), 0);
+      const estadoPago = saldo<=0.009 ? 'pagada' : (abonado>0 ? 'abonada' : 'pendiente');
+      t.update(ref, {pagos, abonado, saldo, estadoPago,
+        actualizado: firebase.firestore.FieldValue.serverTimestamp()});
+    });
+    toast('Abono eliminado');
+    setTimeout(()=> openVenta(vid), 200);
+  }catch(e){ console.error('delAbono', e); toast('No se pudo eliminar el abono', true); }
+}
+
+function printRecibo(vid, pid){
+  const v = S.ventas.find(x=>x.id===vid); if(!v) return;
+  const p = (v.pagos||[]).find(x=>x.id===pid); if(!p) return;
+  const cli = S.clientes.find(x=>x.id===v.contactoId) || {};
+  doPrint(printHeader('RECIBO DE PAGO', p.numero||'', 'Fecha: '+fdate(p.fecha)+' · Venta: '+v.numero) + `
+    <div class="meta"><b>Recibido de:</b> ${esc(v.contactoNombre)}<br>
+      ${cli.rif?`<b>RIF/CI:</b> ${esc(cli.rif)}<br>`:''}${cli.tel?`<b>Teléfono:</b> ${esc(cli.tel)}<br>`:''}</div>
+    <table>
+      <tr><th>Concepto</th><th class="tr" style="width:140px">Monto</th></tr>
+      <tr><td>Abono a la venta ${esc(v.numero)}${v.cotizacionNum?' (cot. '+esc(v.cotizacionNum)+')':''}
+        — ${esc(p.metodo)}${p.ref?' · Ref: '+esc(p.ref):''}</td>
+        <td class="tr">${p.moneda==='Bs' ? bs(p.monto) : usd(p.monto)}</td></tr>
+    </table>
+    <div class="ptot">
+      ${p.moneda==='Bs'?`<div class="r"><span>Tasa aplicada</span><b>${money(p.tasa)} Bs/USD</b></div>`:''}
+      <div class="r b"><span>ABONO EN USD</span><b>${usd(p.montoUsd)}</b></div>
+      <div class="r"><span>Total de la venta</span><b>${usd(v.total)}</b></div>
+      <div class="r"><span>Total abonado</span><b>${usd(v.abonado||0)}</b></div>
+      <div class="r b"><span>SALDO PENDIENTE</span><b>${usd(v.saldo!=null?v.saldo:v.total)}</b></div>
+    </div>
+    ${p.notas?`<div class="note"><b>Nota:</b> ${esc(p.notas)}</div>`:''}
+    <div class="sigs">
+      <div>Recibido por<br>${esc(S.config.empresa.nombre||'Panaven')}</div>
+      <div>Cliente<br>${esc(v.contactoNombre||'')}</div>
     </div>`);
 }
 
