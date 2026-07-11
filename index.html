@@ -10,6 +10,7 @@
 <link rel="apple-touch-icon" href="icon.png">
 <meta name="theme-color" content="#0f1e3d">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
 :root{
@@ -297,9 +298,44 @@ textarea.f{resize:vertical; min-height:64px}
   #printArea .sigs div{flex:1; border-top:1px solid #000; text-align:center; padding-top:7px; font-size:11px; line-height:1.5}
   #printArea .note{margin-top:16px; font-size:10.5px; color:#444; white-space:pre-wrap; line-height:1.5}
 }
+/* ===== Login ===== */
+#loginScreen{
+  position:fixed; inset:0; z-index:9999; display:none;
+  align-items:center; justify-content:center; padding:20px;
+  background:linear-gradient(160deg, #0b2a66 0%, #123c8f 55%, #1e56c8 100%);
+}
+#loginScreen.show{display:flex}
+.login-card{
+  width:100%; max-width:380px; background:#fff; border-radius:18px;
+  padding:28px 24px; box-shadow:0 24px 60px rgba(0,0,0,.35); text-align:center;
+}
+.login-card #loginLogo{width:200px; max-width:80%; margin:4px auto 2px; display:block}
+.login-card .login-sub{color:var(--muted); font-size:12px; letter-spacing:.14em;
+  text-transform:uppercase; font-weight:700; margin:0 0 18px}
+.login-card label{display:block; text-align:left}
+.login-card #loginError{color:var(--bad); font-size:13px; min-height:18px; margin:6px 0 8px; text-align:left}
+.login-card .login-foot{color:var(--muted); font-size:11.5px; margin:16px 0 0; line-height:1.5}
+body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
 </style>
 </head>
 <body>
+
+<!-- ============ INICIO DE SESIÓN ============ -->
+<div id="loginScreen">
+  <div class="login-card">
+    <img id="loginLogo" alt="Panaven">
+    <p class="login-sub">Sistema Administrativo</p>
+    <label class="f">Correo</label>
+    <input class="f" id="loginEmail" type="email" autocomplete="username" placeholder="usuario@panaven.com"
+      onkeydown="if(event.key==='Enter')$('loginPass').focus()">
+    <label class="f">Contraseña</label>
+    <input class="f" id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••"
+      onkeydown="if(event.key==='Enter')doLogin()">
+    <p id="loginError"></p>
+    <button class="btn primary block" id="loginBtn" onclick="doLogin()">Entrar</button>
+    <p class="login-foot">Acceso solo para el equipo de Panaven.<br>¿Sin cuenta? Habla con el administrador.</p>
+  </div>
+</div>
 
 <header class="app">
   <img class="brand" id="brandTop" alt="Panaven">
@@ -443,6 +479,11 @@ textarea.f{resize:vertical; min-height:64px}
       <input class="f" id="cfgIva" type="number" step="0.1" inputmode="decimal" placeholder="16">
       <div class="actions"><button class="btn primary block" onclick="saveEmpresa()">Guardar datos</button></div>
     </div>
+    <div class="card">
+      <h3 style="font-size:15px; margin-bottom:4px">Sesión</h3>
+      <p style="color:var(--muted); font-size:13px; margin:0 0 10px">Conectado como <b id="sesionUsuario">—</b></p>
+      <button class="btn danger block" onclick="doLogout()">Cerrar sesión</button>
+    </div>
     <p style="text-align:center; color:var(--muted); font-size:12px">Panaven · Administración v1 — datos en tiempo real (Firestore)</p>
   </section>
 </main>
@@ -573,6 +614,73 @@ function newDocFromTab(){
 }
 
 /* ===================== SUSCRIPCIONES ===================== */
+/* ===================== AUTENTICACIÓN ===================== */
+const auth = firebase.auth();
+let appStarted = false;
+document.body.classList.add('locked'); // nada visible hasta verificar la sesión
+
+// Las conexiones a Firestore solo arrancan cuando hay sesión iniciada:
+// con las reglas cerradas, conectarse antes daría "permisos insuficientes".
+function startApp(){
+  if(appStarted) return;
+  appStarted = true;
+  listenConfig();
+  listen('clientes','clientes');
+  listen('proveedores','proveedores');
+  listen('productos','productos');
+  listen('solicitudes','solicitudes');
+  listen('cotizaciones','cotizaciones');
+  listen('notas','notas');
+  listen('ventas','ventas');
+  listen('gastos','gastos');
+}
+
+auth.onAuthStateChanged(user=>{
+  const login = $('loginScreen');
+  if(user){
+    login.classList.remove('show');
+    document.body.classList.remove('locked');
+    const chip = $('sesionUsuario'); if(chip) chip.textContent = user.email || '';
+    startApp();
+  } else {
+    document.body.classList.add('locked');
+    login.classList.add('show');
+    const lg = $('loginLogo'); if(lg && !lg.src) lg.src = LOGO;
+    setTimeout(()=> $('loginEmail')?.focus(), 100);
+  }
+});
+
+async function doLogin(){
+  const email = $('loginEmail').value.trim();
+  const pass = $('loginPass').value;
+  const err = $('loginError');
+  err.textContent = '';
+  if(!email || !pass){ err.textContent = 'Escribe el correo y la contraseña.'; return; }
+  const btn = $('loginBtn');
+  btn.disabled = true; btn.textContent = 'Entrando…';
+  try{
+    await auth.signInWithEmailAndPassword(email, pass);
+    // onAuthStateChanged se encarga del resto
+  }catch(e){
+    const msgs = {
+      'auth/invalid-credential': 'Correo o contraseña incorrectos.',
+      'auth/wrong-password': 'Correo o contraseña incorrectos.',
+      'auth/user-not-found': 'Ese correo no está registrado.',
+      'auth/invalid-email': 'El correo no es válido.',
+      'auth/too-many-requests': 'Demasiados intentos. Espera unos minutos.',
+      'auth/network-request-failed': 'Sin conexión. Revisa tu internet.'
+    };
+    err.textContent = msgs[e.code] || 'No se pudo iniciar sesión. Intenta de nuevo.';
+  }
+  btn.disabled = false; btn.textContent = 'Entrar';
+}
+
+async function doLogout(){
+  if(!confirm('¿Cerrar la sesión?')) return;
+  await auth.signOut();
+  location.reload(); // arranque limpio en la pantalla de login
+}
+
 function listen(col, key, cb){
   db.collection(col).onSnapshot(snap=>{
     S[key] = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -580,16 +688,9 @@ function listen(col, key, cb){
     renderAll();
   }, e=>{ console.error(col, e); toast('Error de conexión con '+col, true); });
 }
-listen('clientes','clientes');
-listen('proveedores','proveedores');
-listen('productos','productos');
-listen('solicitudes','solicitudes');
-listen('cotizaciones','cotizaciones');
-listen('notas','notas');
-listen('ventas','ventas');
-listen('gastos','gastos');
 
-db.collection('config').doc('general').onSnapshot(d=>{
+function listenConfig(){
+  db.collection('config').doc('general').onSnapshot(d=>{
   if(d.exists){
     const c = d.data();
     S.config.tasa = c.tasa || 0;
@@ -604,7 +705,8 @@ db.collection('config').doc('general').onSnapshot(d=>{
   $('cfgTel').value = S.config.empresa.tel || '';
   $('cfgDir').value = S.config.empresa.dir || '';
   renderAll();
-});
+  });
+}
 
 /* ===================== CONFIG ===================== */
 function openTasa(){
