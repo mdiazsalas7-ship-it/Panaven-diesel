@@ -298,6 +298,18 @@ textarea.f{resize:vertical; min-height:64px}
   #printArea .sigs div{flex:1; border-top:1px solid #000; text-align:center; padding-top:7px; font-size:11px; line-height:1.5}
   #printArea .note{margin-top:16px; font-size:10.5px; color:#444; white-space:pre-wrap; line-height:1.5}
 }
+/* ===== Reporte del mes ===== */
+.mes-nav{display:flex; align-items:center; gap:8px}
+.mes-nav b{font-size:13px; min-width:110px; text-align:center; text-transform:capitalize}
+.mes-nav button{
+  width:28px; height:28px; border-radius:8px; border:1px solid var(--line);
+  background:#fff; font-size:16px; font-weight:700; color:var(--ink); cursor:pointer;
+}
+.mes-nav button:disabled{opacity:.35; cursor:default}
+.rep-row{display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px dashed var(--line)}
+.rep-row:last-child{border-bottom:none}
+.rep-row span{color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.rep-row b{flex-shrink:0}
 /* ===== Login ===== */
 #loginScreen{
   position:fixed; inset:0; z-index:9999; display:none;
@@ -371,6 +383,37 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
       <button class="btn primary" onclick="newCotizacion()">+ Cotización</button>
       <button class="btn ghost" onclick="newSolicitud()">+ Solicitud a proveedor</button>
       <button class="btn ghost" onclick="newNota()">+ Nota de entrega</button>
+    </div>
+
+    <!-- ===== Reporte del mes ===== -->
+    <div class="section-title" style="margin-top:18px">
+      <h2>Reporte del mes</h2>
+      <div class="mes-nav">
+        <button onclick="cambiarMes(-1)" title="Mes anterior">‹</button>
+        <b id="repMesLabel">—</b>
+        <button id="repMesNext" onclick="cambiarMes(1)" title="Mes siguiente">›</button>
+      </div>
+    </div>
+    <div class="stat-grid">
+      <div class="stat"><small>Vendido</small><b id="repVendido">$ 0,00</b><span class="sub" id="repVendidoSub">—</span></div>
+      <div class="stat"><small>Cobrado</small><b id="repCobrado">$ 0,00</b><span class="sub" id="repCobradoSub">—</span></div>
+      <div class="stat" onclick="go('gastos')"><small>Gastado</small><b id="repGastado">$ 0,00</b><span class="sub" id="repGastadoSub">—</span></div>
+      <div class="stat"><small>Caja del mes</small><b id="repCaja">$ 0,00</b><span class="sub">cobrado − gastado</span></div>
+    </div>
+    <div class="stat-grid" style="grid-template-columns:1fr">
+      <div class="stat" onclick="go('ventas');setSubTab('ventas','porcobrar')" style="cursor:pointer">
+        <small>Por cobrar (total acumulado)</small><b id="repPorCobrar">$ 0,00</b><span class="sub" id="repPorCobrarSub">—</span>
+      </div>
+    </div>
+    <div class="grid2" style="gap:10px; align-items:start">
+      <div class="card" style="margin:0">
+        <h3 style="font-size:13.5px; margin-bottom:8px">Mejores clientes del mes</h3>
+        <div id="repTopClientes" style="font-size:13px"></div>
+      </div>
+      <div class="card" style="margin:0">
+        <h3 style="font-size:13.5px; margin-bottom:8px">Más vendidos del mes</h3>
+        <div id="repTopProductos" style="font-size:13px"></div>
+      </div>
     </div>
 
     <div class="section-title"><h2>Actividad reciente</h2></div>
@@ -1932,6 +1975,91 @@ function renderVentas(){
     : `<div class="empty">No hay ventas${q?' que coincidan':' todavía'}. Abre una cotización y pulsa <b>Registrar venta</b>.</div>`;
 }
 
+/* ===================== REPORTE DEL MES ===================== */
+let repMes = hoyISO().slice(0,7); // 'YYYY-MM' del mes que se está viendo
+
+const tsMes = t => {                       // Timestamp de Firestore → 'YYYY-MM'
+  const d = t?.toDate ? t.toDate() : (t instanceof Date ? t : null);
+  if(!d) return '';
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+};
+const mesLabel = m => {
+  const [y,mm] = m.split('-').map(Number);
+  return new Date(y, mm-1, 1).toLocaleDateString('es-VE',{month:'long', year:'numeric'});
+};
+function cambiarMes(paso){
+  const [y,m] = repMes.split('-').map(Number);
+  const d = new Date(y, m-1+paso, 1);
+  const nuevo = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  if(nuevo > hoyISO().slice(0,7)) return;  // no hay futuro que reportar
+  repMes = nuevo;
+  renderReporte();
+}
+
+function renderReporte(){
+  const lbl = $('repMesLabel'); if(!lbl) return;
+  lbl.textContent = mesLabel(repMes);
+  const next = $('repMesNext'); if(next) next.disabled = (repMes >= hoyISO().slice(0,7));
+
+  const activas = S.ventas.filter(v=>v.estado!=='anulada');
+
+  // Vendido: ventas registradas en el mes
+  const ventasMes = activas.filter(v=> tsMes(v.fecha)===repMes);
+  const vendido = ventasMes.reduce((s,v)=> s+(v.total||0), 0);
+  $('repVendido').textContent = usd(vendido);
+  $('repVendidoSub').textContent = ventasMes.length ? ventasMes.length+' venta'+(ventasMes.length!==1?'s':'') : 'sin ventas';
+
+  // Cobrado: abonos que ENTRARON en el mes (aunque la venta sea de otro mes)
+  let cobrado = 0, nPagos = 0;
+  activas.forEach(v=> (v.pagos||[]).forEach(p=>{
+    if(tsMes(p.fecha)===repMes){ cobrado += (p.montoUsd||0); nPagos++; }
+  }));
+  $('repCobrado').textContent = usd(cobrado);
+  $('repCobradoSub').textContent = nPagos ? nPagos+' abono'+(nPagos!==1?'s':'') : 'sin cobros';
+
+  // Gastado: gastos del mes
+  const gastosMes = S.gastos.filter(g=> (g.fechaISO||'').startsWith(repMes));
+  const gastado = gastosMes.reduce((s,g)=> s+(g.montoUsd||0), 0);
+  $('repGastado').textContent = usd(gastado);
+  $('repGastadoSub').textContent = gastosMes.length ? gastosMes.length+' gasto'+(gastosMes.length!==1?'s':'') : 'sin gastos';
+
+  // Caja del mes: lo que entró menos lo que salió
+  const caja = cobrado - gastado;
+  const cajaEl = $('repCaja');
+  cajaEl.textContent = usd(caja);
+  cajaEl.style.color = caja > 0.009 ? 'var(--ok)' : (caja < -0.009 ? 'var(--bad)' : '');
+
+  // Por cobrar acumulado (todas las deudas vivas, sin importar el mes)
+  const porCobrar = activas.reduce((s,v)=> s+(v.saldo!=null?v.saldo:v.total), 0);
+  const deudores = new Set(activas.filter(v=>(v.saldo!=null?v.saldo:v.total)>0.009).map(v=>v.contactoId||v.contactoNombre)).size;
+  $('repPorCobrar').textContent = usd(porCobrar);
+  $('repPorCobrarSub').textContent = deudores ? deudores+' cliente'+(deudores!==1?'s':'')+' con saldo — toca para ver' : 'todo cobrado';
+
+  // Top clientes del mes (por monto vendido)
+  const porCliente = {};
+  ventasMes.forEach(v=>{
+    const k = v.contactoNombre||'—';
+    porCliente[k] = (porCliente[k]||0) + (v.total||0);
+  });
+  const topC = Object.entries(porCliente).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  $('repTopClientes').innerHTML = topC.length
+    ? topC.map(([n,t])=>`<div class="rep-row"><span>${esc(n)}</span><b>${usd(t)}</b></div>`).join('')
+    : '<div class="rep-row"><span>Sin ventas este mes</span></div>';
+
+  // Top productos del mes (por monto)
+  const porProd = {};
+  ventasMes.forEach(v=> (v.items||[]).forEach(i=>{
+    const k = i.desc||'—';
+    (porProd[k] = porProd[k]||{cant:0, monto:0});
+    porProd[k].cant += num(i.cant)||0;
+    porProd[k].monto += (num(i.cant)||0)*(num(i.precio)||0);
+  }));
+  const topP = Object.entries(porProd).sort((a,b)=>b[1].monto-a[1].monto).slice(0,5);
+  $('repTopProductos').innerHTML = topP.length
+    ? topP.map(([n,d])=>`<div class="rep-row"><span>${esc(n)} × ${money(d.cant)}</span><b>${usd(d.monto)}</b></div>`).join('')
+    : '<div class="rep-row"><span>Sin ventas este mes</span></div>';
+}
+
 function renderInicio(){
   $('stClientes').textContent = S.clientes.length;
   $('stProveedores').textContent = S.proveedores.length;
@@ -1954,6 +2082,7 @@ function renderInicio(){
 
 function renderAll(){
   renderInicio();
+  renderReporte();
   renderContactos();
   renderProductos();
   updateProdDatalist();
