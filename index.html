@@ -11,7 +11,6 @@
 <meta name="theme-color" content="#0f1e3d">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <style>
 :root{
   --ink:#0f1e3d;         /* azul marino Panaven */
@@ -62,20 +61,6 @@ header.app .t strong{font-size:18px; letter-spacing:.01em}
 .tasa-chip b{font-size:14px}
 
 main{max-width:860px; margin:0 auto; padding:14px 14px 8px}
-
-/* ===== Login ===== */
-#loginScreen{
-  position:fixed; inset:0; z-index:100; background:var(--bg, #f4f6fa);
-  display:flex; align-items:center; justify-content:center; padding:20px;
-}
-#loginScreen .card-login{
-  background:#fff; border-radius:18px; box-shadow:0 8px 40px rgba(15,30,61,.15);
-  padding:28px 24px; width:100%; max-width:380px; text-align:center;
-}
-#loginScreen img{max-width:230px; width:100%; margin:0 auto 6px; display:block}
-#loginScreen h2{font-size:16px; margin:4px 0 14px; color:var(--muted); font-weight:600}
-#loginScreen input{text-align:left}
-#loginErr{color:var(--bad, #c0262d); font-size:13px; font-weight:600; min-height:18px; margin-top:8px}
 
 /* ===== Nav inferior ===== */
 nav.bottom{
@@ -151,8 +136,7 @@ nav.bottom button.active{color:var(--brand); background:var(--brand-soft)}
 }
 .docnum.sol{background:#6d28d9}
 .docnum.ne{background:#0f766e}
-.docnum.vta{background:#b45309}
-.docnum.gto{background:#475569}
+.docnum.vta{background:#0f9d58}
 
 .badge{display:inline-block; font-size:10.5px; font-weight:800; letter-spacing:.04em; padding:3px 8px; border-radius:99px; text-transform:uppercase}
 .badge.borrador{background:var(--gray-soft); color:var(--muted)}
@@ -160,9 +144,8 @@ nav.bottom button.active{color:var(--brand); background:var(--brand-soft)}
 .badge.respondida,.badge.aprobada,.badge.entregada{background:var(--ok-soft); color:var(--ok)}
 .badge.rechazada,.badge.anulada{background:var(--bad-soft); color:var(--bad)}
 .badge.pendiente{background:var(--warn-soft); color:var(--warn)}
-.badge.porcobrar{background:var(--warn-soft); color:var(--warn)}
+.badge.pagada,.badge.activa{background:var(--ok-soft); color:var(--ok)}
 .badge.abonada{background:var(--brand-soft); color:var(--brand)}
-.badge.pagada{background:var(--ok-soft); color:var(--ok)}
 
 .empty{
   text-align:center; color:var(--muted); padding:44px 20px; font-size:14px;
@@ -318,21 +301,6 @@ textarea.f{resize:vertical; min-height:64px}
 </head>
 <body>
 
-<!-- ============ LOGIN ============ -->
-<div id="loginScreen">
-  <div class="card-login">
-    <img id="brandLogin" alt="Panaven">
-    <h2>Sistema administrativo · Acceso de socios</h2>
-    <label class="f" style="text-align:left">Correo</label>
-    <input class="f" id="loginEmail" type="email" inputmode="email" autocomplete="username" placeholder="tucorreo@ejemplo.com">
-    <label class="f" style="text-align:left">Contraseña</label>
-    <input class="f" id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••"
-      onkeydown="if(event.key==='Enter') doLogin()">
-    <div id="loginErr"></div>
-    <button class="btn primary block" id="loginBtn" onclick="doLogin()" style="margin-top:6px">Entrar</button>
-  </div>
-</div>
-
 <header class="app">
   <img class="brand" id="brandTop" alt="Panaven">
   <div class="t">
@@ -360,12 +328,6 @@ textarea.f{resize:vertical; min-height:64px}
       </div>
       <div class="stat" onclick="go('entregas')">
         <small>Notas de entrega</small><b id="stNotas">0</b><span class="sub" id="stNotasSub">—</span>
-      </div>
-      <div class="stat" onclick="go('finanzas');setSubTab('finanzas','ventas')">
-        <small>Por cobrar</small><b id="stPorCobrar">$ 0</b><span class="sub" id="stPorCobrarSub">—</span>
-      </div>
-      <div class="stat" onclick="go('finanzas');setSubTab('finanzas','ventas')">
-        <small>Ventas del mes</small><b id="stVentasMes">$ 0</b><span class="sub" id="stVentasMesSub">—</span>
       </div>
     </div>
 
@@ -437,26 +399,17 @@ textarea.f{resize:vertical; min-height:64px}
     <div id="listNotas"></div>
   </section>
 
-  <!-- ============ FINANZAS ============ -->
-  <section id="view-finanzas" style="display:none">
-    <div class="tabs" id="tabs-finanzas">
-      <button data-sub="ventas" class="active" onclick="setSubTab('finanzas','ventas')">Ventas</button>
-      <button data-sub="gastos" onclick="setSubTab('finanzas','gastos')">Gastos</button>
-    </div>
-    <div class="stat-grid" id="finStats"></div>
-    <div class="fab-row">
-      <button class="btn primary block" id="btnNewFin" onclick="newFinFromTab()">+ Registrar venta</button>
-    </div>
-    <div class="search" id="finSearchBox">
+  <!-- ============ VENTAS ============ -->
+  <section id="view-ventas" style="display:none">
+    <div class="section-title"><h2>Ventas</h2><small id="ventasResumen"></small></div>
+    <div class="search">
       <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input id="qFinanzas" placeholder="Buscar por número o nombre…" oninput="renderFinanzas()">
+      <input id="qVentas" placeholder="Buscar por número o cliente…" oninput="renderVentas()">
     </div>
-    <div class="tabs" id="finFilterTabs" style="margin-top:2px">
-      <button data-f="todas" class="active" onclick="setVentaFilter('todas')">Todas</button>
-      <button data-f="porcobrar" onclick="setVentaFilter('porcobrar')">Por cobrar</button>
-      <button data-f="pagada" onclick="setVentaFilter('pagada')">Pagadas</button>
-    </div>
-    <div id="listFinanzas"></div>
+    <div id="listVentas"></div>
+    <p style="text-align:center; color:var(--muted); font-size:12px; margin-top:14px">
+      Las ventas nacen del botón <b>Registrar venta</b> dentro de una cotización.
+    </p>
   </section>
 
   <!-- ============ AJUSTES ============ -->
@@ -485,11 +438,6 @@ textarea.f{resize:vertical; min-height:64px}
       <input class="f" id="cfgIva" type="number" step="0.1" inputmode="decimal" placeholder="16">
       <div class="actions"><button class="btn primary block" onclick="saveEmpresa()">Guardar datos</button></div>
     </div>
-    <div class="card">
-      <h3 style="font-size:15px; margin-bottom:4px">Cuenta</h3>
-      <p style="color:var(--muted); font-size:13px; margin:0 0 10px">Sesión iniciada como <b id="userEmail">—</b></p>
-      <button class="btn danger block" onclick="doLogout()">Cerrar sesión</button>
-    </div>
     <p style="text-align:center; color:var(--muted); font-size:12px">Panaven · Administración v1 — datos en tiempo real (Firestore)</p>
   </section>
 </main>
@@ -515,8 +463,8 @@ textarea.f{resize:vertical; min-height:64px}
   <button id="nav-entregas" onclick="go('entregas')">
     <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><path d="M3 7h11v10H3z"/><path d="M14 10h4l3 3v4h-7"/><circle cx="7" cy="18.5" r="1.8"/><circle cx="17.5" cy="18.5" r="1.8"/></svg>Entregas
   </button>
-  <button id="nav-finanzas" onclick="go('finanzas')">
-    <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M14.8 8.8c-.5-.9-1.5-1.4-2.8-1.4-1.7 0-2.9.9-2.9 2.2 0 2.9 6 1.5 6 4.5 0 1.4-1.3 2.3-3.1 2.3-1.5 0-2.6-.6-3.1-1.6M12 5.4v1.9M12 16.5v2"/></svg>Finanzas
+  <button id="nav-ventas" onclick="go('ventas')">
+    <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9v6M18 9v6"/></svg>Ventas
   </button>
   <button id="nav-ajustes" onclick="go('ajustes')">
     <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.4 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.4-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2Z"/></svg>Ajustes
@@ -545,7 +493,6 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-const auth = firebase.auth();
 db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
 
 /* Logo Panaven incrustado (no depende de archivos externos) */
@@ -554,12 +501,10 @@ const LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA+gAAACyCAMAAADmgBXa
 /* ===================== ESTADO ===================== */
 const S = {
   clientes: [], proveedores: [], productos: [],
-  solicitudes: [], cotizaciones: [], notas: [],
-  ventas: [], gastos: [],
+  solicitudes: [], cotizaciones: [], notas: [], ventas: [],
   config: { tasa: 0, empresa: {nombre:'Panaven', rif:'', tel:'', dir:''}, iva: 16 },
   view: 'inicio',
-  sub: { contactos:'clientes', cotizar:'cotizaciones', finanzas:'ventas' },
-  ventaFilter: 'todas',
+  sub: { contactos:'clientes', cotizar:'cotizaciones' },
   editLines: []   // líneas del documento en edición
 };
 
@@ -596,7 +541,7 @@ function modalHead(title, sub){
 /* ===================== NAVEGACIÓN ===================== */
 function go(view){
   S.view = view;
-  ['inicio','contactos','productos','cotizar','entregas','finanzas','ajustes'].forEach(v=>{
+  ['inicio','contactos','productos','cotizar','entregas','ventas','ajustes'].forEach(v=>{
     $('view-'+v).style.display = v===view ? '' : 'none';
     $('nav-'+v).classList.toggle('active', v===view);
   });
@@ -609,22 +554,12 @@ function setSubTab(group, sub){
   if(group==='contactos'){
     $('btnNewContacto').textContent = sub==='clientes' ? '+ Registrar cliente' : '+ Registrar proveedor';
     renderContactos();
-  } else if(group==='finanzas'){
-    $('btnNewFin').textContent = sub==='ventas' ? '+ Registrar venta directa' : '+ Registrar gasto';
-    $('finFilterTabs').style.display = sub==='ventas' ? '' : 'none';
-    renderFinanzas();
   } else {
     $('btnNewDoc').textContent = sub==='cotizaciones' ? '+ Nueva cotización' : '+ Nueva solicitud a proveedor';
     renderCotizar();
   }
 }
 function newDocFromTab(){ S.sub.cotizar==='cotizaciones' ? newCotizacion() : newSolicitud(); }
-function newFinFromTab(){ S.sub.finanzas==='ventas' ? ventaDirecta() : gastoForm(); }
-function setVentaFilter(f){
-  S.ventaFilter = f;
-  document.querySelectorAll('#finFilterTabs button').forEach(b=> b.classList.toggle('active', b.dataset.f===f));
-  renderFinanzas();
-}
 
 /* ===================== SUSCRIPCIONES ===================== */
 function listen(col, key, cb){
@@ -634,52 +569,6 @@ function listen(col, key, cb){
     renderAll();
   }, e=>{ console.error(col, e); toast('Error de conexión con '+col, true); });
 }
-/* ===================== AUTENTICACIÓN ===================== */
-let appStarted = false;
-
-auth.onAuthStateChanged(u=>{
-  if(u){
-    $('loginScreen').style.display = 'none';
-    $('userEmail').textContent = u.email || '';
-    if(!appStarted){ appStarted = true; startApp(); }
-  } else {
-    $('loginScreen').style.display = 'flex';
-    setTimeout(()=> $('loginEmail')?.focus(), 100);
-  }
-});
-
-async function doLogin(){
-  const email = $('loginEmail').value.trim();
-  const pass = $('loginPass').value;
-  const err = $('loginErr');
-  err.textContent = '';
-  if(!email || !pass){ err.textContent = 'Escribe tu correo y contraseña.'; return; }
-  $('loginBtn').disabled = true; $('loginBtn').textContent = 'Entrando…';
-  try{
-    await auth.signInWithEmailAndPassword(email, pass);
-    $('loginPass').value = '';
-  }catch(e){
-    const msgs = {
-      'auth/invalid-credential':'Correo o contraseña incorrectos.',
-      'auth/wrong-password':'Contraseña incorrecta.',
-      'auth/user-not-found':'Ese correo no tiene acceso. Pídele al administrador que te registre.',
-      'auth/invalid-email':'El correo no es válido.',
-      'auth/too-many-requests':'Demasiados intentos. Espera unos minutos e intenta de nuevo.',
-      'auth/network-request-failed':'Sin conexión. Revisa tu internet e intenta de nuevo.'
-    };
-    err.textContent = msgs[e.code] || 'No se pudo iniciar sesión. Intenta de nuevo.';
-  }
-  $('loginBtn').disabled = false; $('loginBtn').textContent = 'Entrar';
-}
-
-async function doLogout(){
-  if(!confirm('¿Cerrar sesión en este dispositivo?')) return;
-  await auth.signOut();
-  location.reload();
-}
-
-/* ===================== ARRANQUE (solo con sesión) ===================== */
-function startApp(){
 listen('clientes','clientes');
 listen('proveedores','proveedores');
 listen('productos','productos');
@@ -687,7 +576,6 @@ listen('solicitudes','solicitudes');
 listen('cotizaciones','cotizaciones');
 listen('notas','notas');
 listen('ventas','ventas');
-listen('gastos','gastos');
 
 db.collection('config').doc('general').onSnapshot(d=>{
   if(d.exists){
@@ -705,7 +593,6 @@ db.collection('config').doc('general').onSnapshot(d=>{
   $('cfgDir').value = S.config.empresa.dir || '';
   renderAll();
 });
-} // fin startApp()
 
 /* ===================== CONFIG ===================== */
 function openTasa(){
@@ -737,7 +624,7 @@ async function saveEmpresa(){
 }
 
 /* ===================== NUMERACIÓN ===================== */
-async function nextNumber(tipo){ // 'cot' | 'sol' | 'ne' | 'vta' | 'gto'
+async function nextNumber(tipo){ // 'cot' | 'sol' | 'ne'
   const ref = db.collection('config').doc('counters');
   const n = await db.runTransaction(async t=>{
     const d = await t.get(ref);
@@ -745,7 +632,7 @@ async function nextNumber(tipo){ // 'cot' | 'sol' | 'ne' | 'vta' | 'gto'
     t.set(ref, {[tipo]: cur+1}, {merge:true});
     return cur+1;
   });
-  const pref = {cot:'COT', sol:'SC', ne:'NE', vta:'V', gto:'G'}[tipo];
+  const pref = {cot:'COT', sol:'SC', ne:'NE', vta:'VTA'}[tipo];
   return pref + '-' + String(n).padStart(4,'0');
 }
 
@@ -763,18 +650,13 @@ function renderContactos(){
     box.innerHTML = `<div class="empty"><svg fill="none" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg><br>No hay ${col} ${q?'que coincidan':'registrados todavía'}.</div>`;
     return;
   }
-  box.innerHTML = list.map(c=>{
-    const deuda = col==='clientes' ? deudaCliente(c.id).saldo : 0;
-    return `
+  box.innerHTML = list.map(c=>`
     <div class="item-row" onclick="openContacto('${col}','${c.id}')">
       <div class="avatar ${col==='proveedores'?'prov':''}">${esc((c.nombre||'?').charAt(0).toUpperCase())}</div>
       <div class="info"><b>${esc(c.nombre)}</b>
         <small>${esc(c.rif||'Sin RIF')}${c.tel?' · '+esc(c.tel):''}</small></div>
-      <div class="right">${deuda>0.009
-        ? `<b style="color:var(--warn)">${usd(deuda)}</b><small style="color:var(--warn)">por cobrar</small>`
-        : `<small>${c.contacto?esc(c.contacto):''}</small>`}</div>
-    </div>`;
-  }).join('');
+      <div class="right"><small>${c.contacto?esc(c.contacto):''}</small></div>
+    </div>`).join('');
 }
 
 function newContacto(){ contactoForm(contactoCol(), null); }
@@ -822,40 +704,12 @@ async function delContacto(col, id){
   closeModal(); toast('Eliminado');
 }
 
-function deudaCliente(id){
-  const vts = S.ventas.filter(v=> v.contactoId===id && v.estado!=='anulada');
-  const pendientes = vts.filter(v=> ((v.total||0)-(v.pagado||0)) > 0.009)
-    .sort((a,b)=> (a.fecha?.seconds||0)-(b.fecha?.seconds||0));
-  const saldo = pendientes.reduce((s,v)=> s + ((v.total||0)-(v.pagado||0)), 0);
-  const comprado = vts.reduce((s,v)=> s + (v.total||0), 0);
-  return { saldo, pendientes, comprado, ventas: vts.length };
-}
-
 function openContacto(col, id){
   const c = S[col].find(x=>x.id===id); if(!c) return;
   const esCli = col==='clientes';
   const docs = esCli
     ? S.cotizaciones.filter(d=>d.contactoId===id).length + ' cotizaciones · ' + S.notas.filter(d=>d.contactoId===id).length + ' notas'
     : S.solicitudes.filter(d=>d.contactoId===id).length + ' solicitudes';
-  let cuenta = '';
-  if(esCli){
-    const d = deudaCliente(id);
-    cuenta = `
-    <label class="f">Estado de cuenta</label>
-    <div class="dl">
-      <div class="r"><span>Total comprado</span><b>${usd(d.comprado)} <small>(${d.ventas} venta${d.ventas!==1?'s':''})</small></b></div>
-      <div class="r"><span style="color:${d.saldo>0.009?'var(--warn)':'var(--ok)'}"><b>Saldo por cobrar</b></span>
-        <b style="color:${d.saldo>0.009?'var(--warn)':'var(--ok)'}">${usd(d.saldo)}</b></div>
-    </div>
-    ${d.pendientes.length?`
-    <label class="f">Ventas pendientes de cobro</label>
-    <div class="dl">
-      ${d.pendientes.map(v=>`<div class="r" style="cursor:pointer" onclick="closeModal();openVenta('${v.id}')">
-        <span>${esc(v.numero)} · ${fdate(v.fecha)}</span>
-        <b style="color:var(--warn)">debe ${usd((v.total||0)-(v.pagado||0))} <small>de ${usd(v.total)}</small></b>
-      </div>`).join('')}
-    </div>`:''}`;
-  }
   openModal(modalHead(c.nombre, esCli?'Cliente':'Proveedor') + `
     <div class="dl">
       <div class="r"><span>RIF / CI</span><b>${esc(c.rif||'—')}</b></div>
@@ -866,7 +720,6 @@ function openContacto(col, id){
       <div class="r"><span>Historial</span><b>${docs}</b></div>
       ${c.notas?`<div class="r"><span>Notas</span><b>${esc(c.notas)}</b></div>`:''}
     </div>
-    ${cuenta}
     <div class="doc-actions">
       ${c.tel?`<button class="btn ok" onclick="waTo('${esc(c.tel)}')">WhatsApp</button>`:''}
       ${esCli
@@ -917,13 +770,8 @@ function productoForm(p){
       <div><label class="f">Unidad</label><input class="f" id="pUnidad" value="${esc(p?.unidad||'und')}" placeholder="und"></div>
     </div>
     <div class="grid2">
-      <div><label class="f">Precio de venta (USD)</label><input class="f" id="pPrecio" type="number" step="0.01" inputmode="decimal" value="${p?.precio ?? ''}" placeholder="0.00" oninput="prodMargen()"></div>
-      <div><label class="f">Costo (USD) <small style="color:var(--muted)">— solo lo ven los socios</small></label><input class="f" id="pCosto" type="number" step="0.01" inputmode="decimal" value="${p?.costo ?? ''}" placeholder="0.00" oninput="prodMargen()"></div>
-    </div>
-    <p class="sub" id="pMargen" style="margin:4px 0 0; font-size:13px; font-weight:600"></p>
-    <div class="grid2">
+      <div><label class="f">Precio de venta (USD)</label><input class="f" id="pPrecio" type="number" step="0.01" inputmode="decimal" value="${p?.precio ?? ''}" placeholder="0.00"></div>
       <div><label class="f">Existencia (stock)</label><input class="f" id="pStock" type="number" step="any" inputmode="decimal" value="${p?.stock ?? ''}" placeholder="0"></div>
-      <div></div>
     </div>
     <label class="f">Notas</label>
     <textarea class="f" id="pNotas" placeholder="Proveedor habitual, costo, equivalencias…">${esc(p?.notas||'')}</textarea>
@@ -931,17 +779,7 @@ function productoForm(p){
       ${p?`<button class="btn danger" onclick="delProducto('${p.id}')">Eliminar</button>`:''}
       <button class="btn primary" onclick="saveProducto('${p?p.id:''}')">${p?'Guardar cambios':'Registrar'}</button>
     </div>`);
-  setTimeout(()=>{ $('pNombre').focus(); prodMargen(); }, 50);
-}
-
-function prodMargen(){
-  const el = $('pMargen'); if(!el) return;
-  const precio = num($('pPrecio')?.value), costo = num($('pCosto')?.value);
-  if(precio>0 && costo>0){
-    const g = precio - costo, pct = g/precio*100;
-    el.style.color = g>=0 ? 'var(--ok)' : 'var(--bad)';
-    el.textContent = 'Ganancia por unidad: '+usd(g)+' ('+money(pct)+'% del precio)';
-  } else el.textContent = '';
+  setTimeout(()=> $('pNombre').focus(), 50);
 }
 
 async function saveProducto(id){
@@ -949,7 +787,6 @@ async function saveProducto(id){
     nombre: $('pNombre').value.trim(), codigo: $('pCodigo').value.trim(),
     unidad: $('pUnidad').value.trim() || 'und',
     precio: num($('pPrecio').value),
-    costo: $('pCosto').value === '' ? null : num($('pCosto').value),
     stock: $('pStock').value === '' ? null : num($('pStock').value),
     notas: $('pNotas').value.trim(),
     actualizado: firebase.firestore.FieldValue.serverTimestamp()
@@ -973,8 +810,6 @@ function openProducto(id){
       <div class="r"><span>Código</span><b>${esc(p.codigo||'—')}</b></div>
       <div class="r"><span>Unidad</span><b>${esc(p.unidad||'und')}</b></div>
       <div class="r"><span>Precio de venta</span><b>${p.precio ? usd(p.precio) : '—'}</b></div>
-      ${p.costo!=null?`<div class="r"><span>Costo</span><b>${usd(p.costo)}</b></div>
-      <div class="r"><span>Ganancia por unidad</span><b style="color:${(p.precio-p.costo)>=0?'var(--ok)':'var(--bad)'}">${usd((p.precio||0)-p.costo)}${p.precio?' ('+money(((p.precio-p.costo)/p.precio)*100)+'%)':''}</b></div>`:''}
       <div class="r"><span>Existencia</span><b>${p.stock==null ? 'No se controla' : money(p.stock)+' '+esc(p.unidad||'und')}</b></div>
       ${p.notas?`<div class="r"><span>Notas</span><b>${esc(p.notas)}</b></div>`:''}
     </div>
@@ -1226,8 +1061,9 @@ function openCotizacion(id){
       <button class="btn ok" onclick="waCotizacion('${id}')">Enviar WhatsApp</button>
       <button class="btn ghost" onclick="printCotizacion('${id}')">Imprimir / PDF</button>
       ${c.ventaId
-        ? `<button class="btn primary" onclick="closeModal();openVenta('${c.ventaId}')">Ver venta ${esc(c.ventaNum||'')}</button>`
-        : `<button class="btn primary" onclick="concretarVenta('${id}')">✓ Cliente aprobó — Concretar venta</button>`}
+        ? `<button class="btn primary" style="grid-column:1/-1" onclick="closeModal();go('ventas');setTimeout(()=>openVenta('${c.ventaId}'),150)">Ver venta ${esc(c.ventaNum||'')}</button>`
+        : `<button class="btn primary" style="grid-column:1/-1" onclick="registrarVenta('${id}')">Registrar venta</button>`}
+      <button class="btn ghost" onclick="notaDesdeCotizacion('${id}')">Nota de entrega suelta</button>
       <button class="btn ghost" onclick="cotizacionForm(S.cotizaciones.find(x=>x.id==='${id}'))">Editar</button>
       <button class="btn danger" style="grid-column:1/-1" onclick="delDoc('cotizaciones','${id}')">Eliminar</button>
     </div>`);
@@ -1322,381 +1158,151 @@ function openNota(id){
     </select>
     <div class="doc-actions">
       <button class="btn ghost" onclick="printNota('${id}')">Imprimir / PDF</button>
-      ${n.ventaId?`<button class="btn primary" onclick="closeModal();openVenta('${n.ventaId}')">Ver venta / cobros</button>`:''}
       <button class="btn ghost" onclick="notaForm(S.notas.find(x=>x.id==='${id}'))">Editar</button>
       <button class="btn ok" onclick="setEstado('notas','${id}','entregada');closeModal();toast('Marcada como entregada')">Marcar entregada</button>
       <button class="btn danger" onclick="delDoc('notas','${id}')">Eliminar</button>
     </div>`);
 }
 
-/* ===================== VENTAS Y COBROS ===================== */
-const METODOS = ['Efectivo $','Efectivo Bs','Pago móvil','Transferencia Bs','Zelle','Punto de venta','Binance / USDT','Otro'];
-const vEstadoLabel = e => ({porcobrar:'por cobrar', abonada:'abonada', pagada:'pagada', anulada:'anulada'}[e] || e);
-const ventaEstado = (total, pagado) => (total - pagado) <= 0.009 ? 'pagada' : (pagado > 0 ? 'abonada' : 'porcobrar');
-
-// Busca el costo en el catálogo (coincidencia por nombre) y lo congela en la venta.
-function costoDeItem(desc){
-  const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === (desc||'').trim().toLowerCase());
-  return (p && p.costo!=null) ? num(p.costo) : null;
-}
-function costearItems(items){
-  let costoTotal = 0, completo = true;
-  const out = items.map(i=>{
-    const c = costoDeItem(i.desc);
-    if(c==null){ completo = false; return {...i}; }
-    costoTotal += (num(i.cant)||0) * c;
-    return {...i, costo: c};
-  });
-  return { items: out, costoTotal: Math.round(costoTotal*100)/100, costoCompleto: completo };
-}
-
-// Al aprobar una cotización: crea la VENTA y la NOTA DE ENTREGA en un solo paso.
-async function concretarVenta(cotId){
+/* ===================== VENTAS ===================== */
+// Registrar venta: nace de una cotización. Crea la VENTA y su NOTA DE ENTREGA
+// de un solo golpe (batch atómico) y enlaza todo con la cotización de origen.
+async function registrarVenta(cotId){
   const c = S.cotizaciones.find(x=>x.id===cotId); if(!c) return;
-  if(c.ventaId){ closeModal(); openVenta(c.ventaId); return; }
-  if(!confirm('Se registrará la venta '+(c.numero)+' de '+(c.contactoNombre||'')+' por '+usd(c.total)+' y se creará su nota de entrega automáticamente. ¿Continuar?')) return;
+  if(c.ventaId){
+    return toast('Esta cotización ya generó la venta '+(c.ventaNum||''), true);
+  }
+  if(!c.items || !c.items.length) return toast('La cotización no tiene artículos', true);
+  if(!confirm(`¿Registrar la venta de la cotización ${c.numero} por ${usd(c.total)}?\n\nSe creará la venta y, automáticamente, su nota de entrega.`)) return;
   try{
-    const now = firebase.firestore.FieldValue.serverTimestamp();
-    // 1) Nota de entrega automática con los mismos artículos
-    const neNum = await nextNumber('ne');
-    const notaRef = db.collection('notas').doc();
-    // 2) Venta con saldo por cobrar
-    const vNum = await nextNumber('vta');
+    const ventaNum = await nextNumber('vta');
+    const notaNum  = await nextNumber('ne');
     const ventaRef = db.collection('ventas').doc();
-    const batch = db.batch();
-    batch.set(notaRef, {
-      numero: neNum, estado: 'pendiente', fecha: now, actualizado: now,
-      contactoId: c.contactoId, contactoNombre: c.contactoNombre||'',
+    const notaRef  = db.collection('notas').doc();
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+
+    const venta = {
+      numero: ventaNum,
+      contactoId: c.contactoId, contactoNombre: c.contactoNombre || '',
+      items: c.items.map(i=>({...i})),
+      conIva: !!c.conIva, ivaPct: c.ivaPct || S.config.iva || 16,
+      subtotal: c.subtotal, iva: c.iva || 0, total: c.total,
+      tasa: c.tasa || S.config.tasa || 0,
+      cotizacionId: c.id, cotizacionNum: c.numero,
+      notaId: notaRef.id, notaNum,
+      pagos: [], abonado: 0, saldo: c.total,
+      estadoPago: 'pendiente',     // pendiente | abonada | pagada  (abonos en la Parte 2)
+      estado: 'activa',            // activa | anulada
+      fecha: now, actualizado: now
+    };
+    const nota = {
+      numero: notaNum,
+      contactoId: c.contactoId, contactoNombre: c.contactoNombre || '',
       items: c.items.map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und'})),
-      recibe: '', notas: '', cotizacionNum: c.numero||'', ventaId: ventaRef.id
-    });
-    const costeo = costearItems(c.items);
-    batch.set(ventaRef, {
-      numero: vNum, estado: 'porcobrar', fecha: now, actualizado: now,
-      contactoId: c.contactoId, contactoNombre: c.contactoNombre||'',
-      items: costeo.items, conIva: !!c.conIva, ivaPct: c.ivaPct||16,
-      subtotal: c.subtotal, iva: c.iva, total: c.total, tasa: c.tasa||S.config.tasa||0,
-      costoTotal: costeo.costoTotal, costoCompleto: costeo.costoCompleto,
-      cotizacionId: c.id, cotizacionNum: c.numero||'', notaId: notaRef.id, notaNum: neNum,
-      abonos: [], pagado: 0, saldo: c.total
-    });
-    batch.update(db.collection('cotizaciones').doc(c.id), {estado:'aprobada', ventaId: ventaRef.id, ventaNum: vNum, actualizado: now});
-    await batch.commit();
-    closeModal();
-    toast('Venta '+vNum+' registrada · Nota '+neNum+' creada');
-    setTimeout(()=> openVenta(ventaRef.id), 350);
-  }catch(e){ console.error(e); toast('No se pudo concretar la venta', true); }
-}
+      recibe: '', notas: '',
+      cotizacionNum: c.numero,
+      ventaId: ventaRef.id, ventaNum,
+      estado: 'pendiente',
+      fecha: now, actualizado: now
+    };
 
-// Venta directa (sin cotización previa): pide cliente y artículos
-function ventaDirecta(){
-  S.editLines = [];
-  const clis = S.clientes.slice().sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
-  openModal(modalHead('Venta directa', 'Venta sin cotización previa. Genera también la nota de entrega.') + `
-    <label class="f">Cliente *</label>
-    <select class="f" id="dContacto">
-      <option value="">— Seleccionar cliente —</option>
-      ${clis.map(p=>`<option value="${p.id}">${esc(p.nombre)}</option>`).join('')}
-    </select>
-    ${!clis.length?'<p class="sub" style="color:var(--warn)">No hay clientes registrados. Regístralos primero en Contactos.</p>':''}
-    ${linesEditor(true)}
-    <div class="grid2" style="margin-top:12px">
-      <div><label class="f" style="margin-top:0">Tasa Bs/USD</label>
-        <input class="f" id="dTasa" type="number" step="0.01" inputmode="decimal" value="${S.config.tasa||''}" oninput="calcTotals()"></div>
-      <div style="display:flex;align-items:flex-end">
-        <label style="display:flex; align-items:center; gap:8px; font-size:14px; font-weight:600; padding-bottom:12px">
-          <input type="checkbox" id="dIva" checked onchange="calcTotals()" style="width:18px;height:18px"> IVA ${S.config.iva||16}%
-        </label></div>
-    </div>
-    <div class="totals" id="totalsBox"></div>
-    <div class="actions">
-      <button class="btn primary block" onclick="saveVentaDirecta()">Registrar venta + nota de entrega</button>
-    </div>`);
-  addLine(true);
-}
-
-async function saveVentaDirecta(){
-  const contactoId = $('dContacto').value;
-  if(!contactoId) return toast('Selecciona el cliente', true);
-  const items = cleanLines();
-  if(!items.length) return toast('Agrega al menos un artículo', true);
-  const cli = S.clientes.find(p=>p.id===contactoId);
-  const conIva = $('dIva').checked;
-  const t = cotTotals(items, conIva);
-  try{
-    const now = firebase.firestore.FieldValue.serverTimestamp();
-    const neNum = await nextNumber('ne');
-    const vNum = await nextNumber('vta');
-    const notaRef = db.collection('notas').doc();
-    const ventaRef = db.collection('ventas').doc();
     const batch = db.batch();
-    batch.set(notaRef, {
-      numero: neNum, estado:'pendiente', fecha: now, actualizado: now,
-      contactoId, contactoNombre: cli?.nombre||'',
-      items: items.map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und'})),
-      recibe:'', notas:'', cotizacionNum:'', ventaId: ventaRef.id
-    });
-    const costeo = costearItems(items);
-    batch.set(ventaRef, {
-      numero: vNum, estado:'porcobrar', fecha: now, actualizado: now,
-      contactoId, contactoNombre: cli?.nombre||'',
-      items: costeo.items, conIva, ivaPct: S.config.iva||16,
-      subtotal: t.sub, iva: t.iva, total: t.tot, tasa: num($('dTasa').value)||S.config.tasa||0,
-      costoTotal: costeo.costoTotal, costoCompleto: costeo.costoCompleto,
-      cotizacionId:'', cotizacionNum:'', notaId: notaRef.id, notaNum: neNum,
-      abonos: [], pagado: 0, saldo: t.tot
-    });
+    batch.set(ventaRef, venta);
+    batch.set(notaRef, nota);
+    batch.update(db.collection('cotizaciones').doc(c.id),
+      {estado:'aprobada', ventaId:ventaRef.id, ventaNum, actualizado:now});
     await batch.commit();
+
     closeModal();
-    toast('Venta '+vNum+' registrada · Nota '+neNum+' creada');
-    setTimeout(()=> openVenta(ventaRef.id), 350);
-  }catch(e){ console.error(e); toast('No se pudo registrar la venta', true); }
+    toast('Venta '+ventaNum+' registrada · nota '+notaNum);
+    go('ventas');
+    setTimeout(()=> openVenta(ventaRef.id), 200);
+  }catch(e){
+    console.error('registrarVenta', e);
+    toast('No se pudo registrar la venta', true);
+  }
+}
+
+function pagoBadge(v){ return v.estado==='anulada' ? 'anulada' : (v.estadoPago||'pendiente'); }
+function pagoLabel(v){
+  if(v.estado==='anulada') return 'anulada';
+  return {pendiente:'por cobrar', abonada:'abonada', pagada:'pagada'}[v.estadoPago] || 'por cobrar';
 }
 
 function openVenta(id){
   const v = S.ventas.find(x=>x.id===id); if(!v) return;
-  const saldo = Math.max(0, (v.total||0) - (v.pagado||0));
+  const nota = v.notaId ? S.notas.find(n=>n.id===v.notaId) : null;
   openModal(modalHead('Venta '+v.numero, 'Cliente: '+(v.contactoNombre||'—')) + `
-    <span class="badge ${v.estado}">${vEstadoLabel(v.estado)}</span>
+    <span class="badge ${pagoBadge(v)}">${pagoLabel(v)}</span>
     <div class="dl">
       <div class="r"><span>Fecha</span><b>${fdate(v.fecha)}</b></div>
-      ${v.cotizacionNum?`<div class="r"><span>Cotización ref.</span><b>${esc(v.cotizacionNum)}</b></div>`:''}
-      ${v.notaNum?`<div class="r"><span>Nota de entrega</span><b>${esc(v.notaNum)}</b></div>`:''}
+      ${v.cotizacionNum?`<div class="r"><span>Cotización</span><b>${esc(v.cotizacionNum)}</b></div>`:''}
+      ${v.notaNum?`<div class="r"><span>Nota de entrega</span><b>${esc(v.notaNum)}${nota?' · '+nota.estado:''}</b></div>`:''}
       ${v.items.map(i=>`<div class="r"><span>${esc(i.desc)} × ${money(i.cant)}</span><b>${usd(i.cant*i.precio)}</b></div>`).join('')}
+      <div class="r"><span>Subtotal</span><b>${usd(v.subtotal)}</b></div>
       ${v.conIva?`<div class="r"><span>IVA ${v.ivaPct||16}%</span><b>${usd(v.iva)}</b></div>`:''}
       <div class="r"><span><b>Total</b></span><b>${usd(v.total)}</b></div>
-      ${v.costoTotal>0?(()=>{
-        const gan = (v.subtotal||0) - v.costoTotal;
-        const pct = v.subtotal ? gan/v.subtotal*100 : 0;
-        return `<div class="r"><span>Costo mercancía${v.costoCompleto?'':' <small>(incompleto)</small>'}</span><b>${usd(v.costoTotal)}</b></div>
-        <div class="r"><span style="color:${gan>=0?'var(--ok)':'var(--bad)'}">Ganancia</span><b style="color:${gan>=0?'var(--ok)':'var(--bad)'}">${usd(gan)} <small>(${money(pct)}%)</small></b></div>`;
-      })():''}
-      <div class="r"><span style="color:var(--ok)">Pagado</span><b style="color:var(--ok)">${usd(v.pagado||0)}</b></div>
-      <div class="r"><span style="color:var(--warn)"><b>Saldo pendiente</b></span><b style="color:var(--warn)">${usd(saldo)}${v.tasa&&saldo?'<br><small>'+bs(saldo*v.tasa)+'</small>':''}</b></div>
+      ${v.tasa?`<div class="r"><span>Total Bs (tasa ${money(v.tasa)})</span><b>${bs(v.total*v.tasa)}</b></div>`:''}
+      <div class="r"><span>Abonado</span><b>${usd(v.abonado||0)}</b></div>
+      <div class="r"><span><b>Saldo pendiente</b></span><b>${usd(v.saldo!=null?v.saldo:v.total)}</b></div>
     </div>
-    ${(v.abonos||[]).length?`
-      <label class="f">Pagos recibidos</label>
-      <div class="dl">
-        ${v.abonos.map((a,i)=>`<div class="r">
-          <span>${fdate(a.fecha)} · ${esc(a.metodo||'')}${a.ref?' · Ref '+esc(a.ref):''}${a.moneda==='Bs'?'<br><small>'+bs(a.monto)+' (tasa '+money(a.tasa)+')</small>':''}</span>
-          <b>${usd(a.montoUsd)} <button class="x-btn" style="vertical-align:middle" title="Eliminar pago" onclick="delAbono('${id}',${i})">✕</button></b>
-        </div>`).join('')}
-      </div>`:''}
     <div class="doc-actions">
-      ${v.estado!=='anulada' && saldo>0.009 ? `<button class="btn primary" onclick="abonoForm('${id}')">＋ Registrar pago</button>`:''}
-      ${v.notaId?`<button class="btn ghost" onclick="closeModal();openNota('${v.notaId}')">Ver nota de entrega</button>`:''}
-      ${v.estado!=='anulada'?`<button class="btn ghost" onclick="anularVenta('${id}')">Anular venta</button>`:''}
-      <button class="btn danger" onclick="delDoc('ventas','${id}')">Eliminar</button>
+      <button class="btn ghost" onclick="printVenta('${id}')">Imprimir / PDF</button>
+      ${v.notaId?`<button class="btn ghost" onclick="openNota('${v.notaId}')">Ver nota de entrega</button>`:''}
+      ${v.estado!=='anulada'?`<button class="btn danger" style="grid-column:1/-1" onclick="anularVenta('${id}')">Anular venta</button>`:''}
     </div>`);
-}
-
-function abonoForm(ventaId){
-  const v = S.ventas.find(x=>x.id===ventaId); if(!v) return;
-  const saldo = Math.max(0, (v.total||0) - (v.pagado||0));
-  openModal(modalHead('Registrar pago · '+v.numero, 'Saldo pendiente: '+usd(saldo)) + `
-    <div class="grid2">
-      <div><label class="f" style="margin-top:0">Monto *</label>
-        <input class="f" id="aMonto" type="number" step="0.01" inputmode="decimal" placeholder="0.00"></div>
-      <div><label class="f" style="margin-top:0">Moneda</label>
-        <select class="f" id="aMoneda" onchange="$('aTasaBox').style.display=this.value==='Bs'?'':'none'">
-          <option value="USD">USD ($)</option><option value="Bs">Bolívares (Bs)</option>
-        </select></div>
-    </div>
-    <div id="aTasaBox" style="display:none">
-      <label class="f">Tasa Bs/USD del pago</label>
-      <input class="f" id="aTasa" type="number" step="0.01" inputmode="decimal" value="${v.tasa||S.config.tasa||''}">
-    </div>
-    <label class="f">Método de pago</label>
-    <select class="f" id="aMetodo">${METODOS.map(m=>`<option>${m}</option>`).join('')}</select>
-    <label class="f">Referencia (opcional)</label>
-    <input class="f" id="aRef" placeholder="Nº de referencia o confirmación">
-    <div class="actions">
-      <button class="btn ghost" onclick="$('aMonto').value='${saldo.toFixed(2)}';$('aMoneda').value='USD';$('aTasaBox').style.display='none'">Pago completo (${usd(saldo)})</button>
-      <button class="btn primary block" onclick="saveAbono('${ventaId}')">Guardar pago</button>
-    </div>`);
-  setTimeout(()=> $('aMonto').focus(), 50);
-}
-
-async function saveAbono(ventaId){
-  const monto = num($('aMonto').value);
-  if(monto<=0) return toast('Indica el monto del pago', true);
-  const moneda = $('aMoneda').value;
-  const tasa = num($('aTasa')?.value) || S.config.tasa || 0;
-  if(moneda==='Bs' && tasa<=0) return toast('Indica la tasa del pago en Bs', true);
-  const montoUsd = moneda==='Bs' ? monto/tasa : monto;
-  const abono = {
-    fecha: firebase.firestore.Timestamp.now(),
-    monto, moneda, tasa: moneda==='Bs'?tasa:0,
-    montoUsd: Math.round(montoUsd*100)/100,
-    metodo: $('aMetodo').value, ref: $('aRef').value.trim()
-  };
-  const ref = db.collection('ventas').doc(ventaId);
-  try{
-    await db.runTransaction(async t=>{
-      const d = await t.get(ref); if(!d.exists) throw new Error('no existe');
-      const data = d.data();
-      const abonos = [...(data.abonos||[]), abono];
-      const pagado = abonos.reduce((s,a)=> s+(a.montoUsd||0), 0);
-      const saldo = Math.max(0, (data.total||0) - pagado);
-      t.update(ref, {abonos, pagado, saldo, estado: ventaEstado(data.total||0, pagado),
-        actualizado: firebase.firestore.FieldValue.serverTimestamp()});
-    });
-    closeModal();
-    toast('Pago registrado: '+usd(abono.montoUsd));
-    setTimeout(()=> openVenta(ventaId), 350);
-  }catch(e){ console.error(e); toast('No se pudo registrar el pago', true); }
-}
-
-async function delAbono(ventaId, idx){
-  if(!confirm('¿Eliminar este pago registrado?')) return;
-  const ref = db.collection('ventas').doc(ventaId);
-  try{
-    await db.runTransaction(async t=>{
-      const d = await t.get(ref); if(!d.exists) return;
-      const data = d.data();
-      const abonos = (data.abonos||[]).filter((_,i)=> i!==idx);
-      const pagado = abonos.reduce((s,a)=> s+(a.montoUsd||0), 0);
-      const saldo = Math.max(0, (data.total||0) - pagado);
-      t.update(ref, {abonos, pagado, saldo, estado: ventaEstado(data.total||0, pagado),
-        actualizado: firebase.firestore.FieldValue.serverTimestamp()});
-    });
-    toast('Pago eliminado');
-    setTimeout(()=> openVenta(ventaId), 350);
-  }catch(e){ console.error(e); toast('No se pudo eliminar el pago', true); }
 }
 
 async function anularVenta(id){
-  if(!confirm('¿Anular esta venta? Dejará de contar en ventas y cuentas por cobrar.')) return;
-  await db.collection('ventas').doc(id).update({estado:'anulada', actualizado: firebase.firestore.FieldValue.serverTimestamp()});
-  closeModal(); toast('Venta anulada');
+  const v = S.ventas.find(x=>x.id===id); if(!v) return;
+  const msg = (v.abonado>0)
+    ? `Esta venta tiene abonos por ${usd(v.abonado)}. ¿Anular la venta ${v.numero} y su nota ${v.notaNum||''} de todas formas?`
+    : `¿Anular la venta ${v.numero}? También se anulará su nota de entrega ${v.notaNum||''}.`;
+  if(!confirm(msg)) return;
+  const now = firebase.firestore.FieldValue.serverTimestamp();
+  try{
+    // Si la nota ya había descontado stock, se restituye antes de anular.
+    if(v.notaId){
+      const n = S.notas.find(x=>x.id===v.notaId);
+      if(n && n.estado==='entregada' && n.stockDescontado){
+        const rb = db.batch();
+        n.items.forEach(it=>{
+          const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === (it.desc||'').trim().toLowerCase());
+          if(p && p.stock!=null) rb.update(db.collection('productos').doc(p.id),
+            {stock: firebase.firestore.FieldValue.increment(num(it.cant)||0)});
+        });
+        rb.update(db.collection('notas').doc(v.notaId), {stockDescontado:false});
+        await rb.commit();
+      }
+    }
+    const batch = db.batch();
+    batch.update(db.collection('ventas').doc(id), {estado:'anulada', actualizado:now});
+    if(v.notaId) batch.update(db.collection('notas').doc(v.notaId), {estado:'anulada', actualizado:now});
+    if(v.cotizacionId) batch.update(db.collection('cotizaciones').doc(v.cotizacionId),
+      {ventaId: firebase.firestore.FieldValue.delete(), ventaNum: firebase.firestore.FieldValue.delete(), actualizado:now});
+    await batch.commit();
+    closeModal(); toast('Venta anulada');
+  }catch(e){ console.error('anularVenta', e); toast('No se pudo anular la venta', true); }
 }
 
-/* ===================== GASTOS ===================== */
-const CATEGORIAS_GASTO = ['Compra de mercancía','Flete y transporte','Servicios (luz, internet…)','Alquiler','Nómina / personal','Impuestos y tasas','Papelería y varios','Otro'];
-
-function gastoForm(g){
-  const hoy = new Date().toISOString().slice(0,10);
-  const fecha = g?.fecha?.toDate ? g.fecha.toDate().toISOString().slice(0,10) : hoy;
-  openModal(modalHead(g ? 'Editar gasto '+(g.numero||'') : 'Registrar gasto', 'Compras, servicios y otros egresos del negocio.') + `
-    <div class="grid2">
-      <div><label class="f" style="margin-top:0">Fecha</label>
-        <input class="f" id="gFecha" type="date" value="${fecha}"></div>
-      <div><label class="f" style="margin-top:0">Categoría</label>
-        <select class="f" id="gCat">${CATEGORIAS_GASTO.map(c=>`<option ${g?.categoria===c?'selected':''}>${c}</option>`).join('')}</select></div>
+function printVenta(id){
+  const v = S.ventas.find(x=>x.id===id); if(!v) return;
+  const cli = S.clientes.find(x=>x.id===v.contactoId) || {};
+  doPrint(printHeader('NOTA DE VENTA', v.numero, 'Fecha: '+fdate(v.fecha)+(v.cotizacionNum?' · Ref: '+v.cotizacionNum:'')) + `
+    <div class="meta"><b>Cliente:</b> ${esc(v.contactoNombre)}<br>
+      ${cli.rif?`<b>RIF/CI:</b> ${esc(cli.rif)}<br>`:''}${cli.tel?`<b>Teléfono:</b> ${esc(cli.tel)}<br>`:''}${cli.dir?`<b>Dirección:</b> ${esc(cli.dir)}<br>`:''}</div>
+    <table><tr><th style="width:40px">#</th><th>Descripción</th><th class="tr" style="width:60px">Cant.</th><th class="tr" style="width:90px">P. Unit $</th><th class="tr" style="width:95px">Total $</th></tr>
+    ${v.items.map((i,ix)=>`<tr><td>${ix+1}</td><td>${esc(i.desc)}</td><td class="tr">${money(i.cant)}</td><td class="tr">${money(i.precio)}</td><td class="tr">${money(i.cant*i.precio)}</td></tr>`).join('')}
+    </table>
+    <div class="ptot">
+      <div class="r"><span>Subtotal</span><b>${usd(v.subtotal)}</b></div>
+      ${v.conIva?`<div class="r"><span>IVA ${v.ivaPct||16}%</span><b>${usd(v.iva)}</b></div>`:''}
+      <div class="r b"><span>TOTAL USD</span><b>${usd(v.total)}</b></div>
+      ${v.tasa?`<div class="r"><span>Total Bs (tasa ${money(v.tasa)})</span><b>${bs(v.total*v.tasa)}</b></div>`:''}
+      <div class="r"><span>Abonado</span><b>${usd(v.abonado||0)}</b></div>
+      <div class="r b"><span>SALDO</span><b>${usd(v.saldo!=null?v.saldo:v.total)}</b></div>
     </div>
-    <label class="f">Descripción *</label>
-    <input class="f" id="gDesc" value="${esc(g?.descripcion||'')}" placeholder="Ej. Flete de mercancía desde Valencia">
-    <div class="grid2">
-      <div><label class="f">Monto *</label>
-        <input class="f" id="gMonto" type="number" step="0.01" inputmode="decimal" value="${g ? (g.moneda==='Bs'?g.monto:g.montoUsd) : ''}" placeholder="0.00"></div>
-      <div><label class="f">Moneda</label>
-        <select class="f" id="gMoneda" onchange="$('gTasaBox').style.display=this.value==='Bs'?'':'none'">
-          <option value="USD" ${(!g||g.moneda!=='Bs')?'selected':''}>USD ($)</option>
-          <option value="Bs" ${g?.moneda==='Bs'?'selected':''}>Bolívares (Bs)</option>
-        </select></div>
-    </div>
-    <div id="gTasaBox" style="display:${g?.moneda==='Bs'?'':'none'}">
-      <label class="f">Tasa Bs/USD</label>
-      <input class="f" id="gTasa" type="number" step="0.01" inputmode="decimal" value="${g?.tasa||S.config.tasa||''}">
-    </div>
-    <label class="f">Método de pago</label>
-    <select class="f" id="gMetodo">${METODOS.map(m=>`<option ${g?.metodo===m?'selected':''}>${m}</option>`).join('')}</select>
-    <div class="actions">
-      <button class="btn primary block" onclick="saveGasto('${g?g.id:''}')">${g?'Guardar cambios':'Registrar gasto'}</button>
-      ${g?`<button class="btn danger block" onclick="delDoc('gastos','${g.id}')">Eliminar gasto</button>`:''}
-    </div>`);
-}
-
-async function saveGasto(id){
-  const descripcion = $('gDesc').value.trim();
-  if(!descripcion) return toast('Describe el gasto', true);
-  const monto = num($('gMonto').value);
-  if(monto<=0) return toast('Indica el monto', true);
-  const moneda = $('gMoneda').value;
-  const tasa = num($('gTasa')?.value) || S.config.tasa || 0;
-  if(moneda==='Bs' && tasa<=0) return toast('Indica la tasa en Bs', true);
-  const montoUsd = Math.round((moneda==='Bs' ? monto/tasa : monto)*100)/100;
-  const f = $('gFecha').value ? new Date($('gFecha').value+'T12:00:00') : new Date();
-  const data = {
-    fecha: firebase.firestore.Timestamp.fromDate(f),
-    categoria: $('gCat').value, descripcion,
-    monto, moneda, tasa: moneda==='Bs'?tasa:0, montoUsd,
-    metodo: $('gMetodo').value,
-    actualizado: firebase.firestore.FieldValue.serverTimestamp()
-  };
-  if(id){ await db.collection('gastos').doc(id).update(data); }
-  else { data.numero = await nextNumber('gto'); await db.collection('gastos').add(data); }
-  closeModal(); toast(id?'Gasto actualizado':'Gasto registrado: '+usd(montoUsd));
-}
-
-/* ===================== RENDER FINANZAS ===================== */
-const sameMonth = ts => {
-  if(!ts) return false;
-  const d = ts.toDate ? ts.toDate() : new Date(ts);
-  const h = new Date();
-  return d.getMonth()===h.getMonth() && d.getFullYear()===h.getFullYear();
-};
-
-function finTotals(){
-  const activas = S.ventas.filter(v=>v.estado!=='anulada');
-  const porCobrar = activas.reduce((s,v)=> s + Math.max(0,(v.total||0)-(v.pagado||0)), 0);
-  const mes = activas.filter(v=>sameMonth(v.fecha));
-  const ventasMes = mes.reduce((s,v)=> s+(v.total||0), 0);
-  const cobradoMes = activas.reduce((s,v)=> s + (v.abonos||[]).filter(a=>sameMonth(a.fecha)).reduce((x,a)=>x+(a.montoUsd||0),0), 0);
-  const gastosMes = S.gastos.filter(g=>sameMonth(g.fecha)).reduce((s,g)=> s+(g.montoUsd||0), 0);
-  const costoMes = mes.reduce((s,v)=> s+(v.costoTotal||0), 0);
-  const gananciaBruta = mes.filter(v=>(v.costoTotal||0)>0)
-    .reduce((s,v)=> s + ((v.subtotal||0)-(v.costoTotal||0)), 0);
-  const gananciaNeta = gananciaBruta - gastosMes;
-  const conCosto = mes.filter(v=>(v.costoTotal||0)>0).length;
-  return {porCobrar, ventasMes, cobradoMes, gastosMes, costoMes, gananciaBruta, gananciaNeta, ventasConCosto: conCosto, ventasDelMes: mes.length};
-}
-
-function ventaRow(v){
-  const saldo = Math.max(0,(v.total||0)-(v.pagado||0));
-  return `<div class="item-row" onclick="openVenta('${v.id}')">
-    <span class="docnum vta">${esc(v.numero)}</span>
-    <div class="info"><b>${esc(v.contactoNombre||'—')}</b>
-      <small>${fdate(v.fecha)} · <span class="badge ${v.estado}">${vEstadoLabel(v.estado)}</span></small></div>
-    <div class="right"><b>${usd(v.total)}</b>
-      <small>${v.estado==='anulada'?'':(saldo>0.009?'debe '+usd(saldo):'pagada')}</small></div>
-  </div>`;
-}
-function gastoRow(g){
-  return `<div class="item-row" onclick="gastoForm(S.gastos.find(x=>x.id==='${g.id}'))">
-    <span class="docnum gto">${esc(g.numero||'G')}</span>
-    <div class="info"><b>${esc(g.descripcion||'—')}</b>
-      <small>${fdate(g.fecha)} · ${esc(g.categoria||'')}</small></div>
-    <div class="right"><b>${usd(g.montoUsd)}</b><small>${esc(g.metodo||'')}</small></div>
-  </div>`;
-}
-
-function renderFinanzas(){
-  if(!$('finStats')) return;
-  const t = finTotals();
-  const gColor = t.gananciaNeta>=0 ? 'var(--ok)' : 'var(--bad)';
-  const costoNota = t.ventasDelMes && t.ventasConCosto < t.ventasDelMes
-    ? t.ventasConCosto+' de '+t.ventasDelMes+' ventas con costo' : 'costo de lo vendido';
-  $('finStats').innerHTML = `
-    <div class="stat" onclick="setSubTab('finanzas','ventas');setVentaFilter('porcobrar')"><small>Por cobrar</small><b>${usd(t.porCobrar)}</b><span class="sub">saldo pendiente</span></div>
-    <div class="stat"><small>Cobrado este mes</small><b>${usd(t.cobradoMes)}</b><span class="sub">pagos recibidos</span></div>
-    <div class="stat"><small>Ventas del mes</small><b>${usd(t.ventasMes)}</b><span class="sub">${t.ventasDelMes} venta${t.ventasDelMes!==1?'s':''}</span></div>
-    <div class="stat"><small>Costo mercancía</small><b>${usd(t.costoMes)}</b><span class="sub">${costoNota}</span></div>
-    <div class="stat" onclick="setSubTab('finanzas','gastos')"><small>Gastos del mes</small><b>${usd(t.gastosMes)}</b><span class="sub">egresos</span></div>
-    <div class="stat"><small>Ganancia neta</small><b style="color:${gColor}">${usd(t.gananciaNeta)}</b><span class="sub">bruta ${usd(t.gananciaBruta)} − gastos</span></div>`;
-  const q = ($('qFinanzas').value||'').toLowerCase();
-  const box = $('listFinanzas');
-  if(S.sub.finanzas==='ventas'){
-    let l = S.ventas.filter(d=>matches(d,q)).sort(byDate);
-    if(S.ventaFilter==='porcobrar') l = l.filter(v=>v.estado==='porcobrar'||v.estado==='abonada');
-    if(S.ventaFilter==='pagada') l = l.filter(v=>v.estado==='pagada');
-    box.innerHTML = l.length ? l.map(ventaRow).join('')
-      : `<div class="empty">No hay ventas${q?' que coincidan':''}. Se crean al concretar una cotización aprobada o con el botón de arriba.</div>`;
-  } else {
-    const l = S.gastos.filter(g=> !q || ((g.numero||'')+' '+(g.descripcion||'')+' '+(g.categoria||'')).toLowerCase().includes(q)).sort(byDate);
-    box.innerHTML = l.length ? l.map(gastoRow).join('')
-      : `<div class="empty">No hay gastos registrados${q?' que coincidan':''}.</div>`;
-  }
+    <div class="note">Precios en dólares estadounidenses. El equivalente en bolívares se calcula a la tasa del día de pago.</div>`);
 }
 
 /* ===================== COMUNES DOCUMENTOS ===================== */
@@ -1732,12 +1338,7 @@ async function markSent(col, doc){
   if(doc.estado==='borrador') await db.collection(col).doc(doc.id).update({estado:'enviada'});
 }
 async function delDoc(col, id){
-  const linked = (col==='cotizaciones' && S.cotizaciones.find(x=>x.id===id)?.ventaId)
-              || (col==='notas' && S.notas.find(x=>x.id===id)?.ventaId);
-  const msg = linked
-    ? 'Este documento está vinculado a una venta registrada. La venta NO se eliminará. ¿Eliminar el documento definitivamente?'
-    : '¿Eliminar este documento definitivamente?';
-  if(!confirm(msg)) return;
+  if(!confirm('¿Eliminar este documento definitivamente?')) return;
   await db.collection(col).doc(id).delete();
   closeModal(); toast('Documento eliminado');
 }
@@ -1820,15 +1421,24 @@ function printNota(id){
 
 /* ===================== LISTAS ===================== */
 function docRow(d, tipo){
-  const cls = {sol:'sol', cot:'', ne:'ne'}[tipo];
-  const open = {sol:'openSolicitud', cot:'openCotizacion', ne:'openNota'}[tipo];
-  const right = tipo==='cot'
-    ? `<b>${usd(d.total)}</b><small>${d.tasa?bs(d.total*d.tasa):''}</small>`
-    : `<small>${d.items.length} artículo${d.items.length!==1?'s':''}</small>`;
+  const cls = {sol:'sol', cot:'', ne:'ne', vta:'vta'}[tipo];
+  const open = {sol:'openSolicitud', cot:'openCotizacion', ne:'openNota', vta:'openVenta'}[tipo];
+  let right, badge, badgeTxt;
+  if(tipo==='cot'){
+    right = `<b>${usd(d.total)}</b><small>${d.tasa?bs(d.total*d.tasa):''}</small>`;
+    badge = badgeTxt = d.estado;
+  } else if(tipo==='vta'){
+    const saldo = d.saldo!=null ? d.saldo : d.total;
+    right = `<b>${usd(d.total)}</b><small>${saldo>0?'saldo '+usd(saldo):'pagada'}</small>`;
+    badge = pagoBadge(d); badgeTxt = pagoLabel(d);
+  } else {
+    right = `<small>${d.items.length} artículo${d.items.length!==1?'s':''}</small>`;
+    badge = badgeTxt = d.estado;
+  }
   return `<div class="item-row" onclick="${open}('${d.id}')">
     <span class="docnum ${cls}">${esc(d.numero)}</span>
     <div class="info"><b>${esc(d.contactoNombre||'—')}</b>
-      <small>${fdate(d.fecha)} · <span class="badge ${d.estado}">${d.estado}</span></small></div>
+      <small>${fdate(d.fecha)} · <span class="badge ${badge}">${badgeTxt}</span></small></div>
     <div class="right">${right}</div>
   </div>`;
 }
@@ -1856,6 +1466,20 @@ function renderNotas(){
     : `<div class="empty">No hay notas de entrega${q?' que coincidan':''}.</div>`;
 }
 
+function renderVentas(){
+  const q = ($('qVentas')?.value||'').toLowerCase();
+  const l = S.ventas.filter(d=>matches(d,q)).sort(byDate);
+  const box = $('listVentas'); if(!box) return;
+  box.innerHTML = l.length ? l.map(d=>docRow(d,'vta')).join('')
+    : `<div class="empty">No hay ventas${q?' que coincidan':' todavía'}. Abre una cotización y pulsa <b>Registrar venta</b>.</div>`;
+  // Resumen: total por cobrar (saldo de ventas activas)
+  const porCobrar = S.ventas
+    .filter(v=>v.estado!=='anulada')
+    .reduce((s,v)=> s + (v.saldo!=null?v.saldo:v.total), 0);
+  const chip = $('ventasResumen');
+  if(chip) chip.textContent = porCobrar>0 ? 'Por cobrar: '+usd(porCobrar) : (S.ventas.length?'todo cobrado':'');
+}
+
 function renderInicio(){
   $('stClientes').textContent = S.clientes.length;
   $('stProveedores').textContent = S.proveedores.length;
@@ -1867,20 +1491,12 @@ function renderInicio(){
   $('stNotasSub').textContent = pendN ? pendN+' pendientes' : 'al día';
   $('hoyLabel').textContent = new Date().toLocaleDateString('es-VE',{weekday:'long', day:'numeric', month:'long'});
 
-  const ft = finTotals();
-  $('stPorCobrar').textContent = usd(ft.porCobrar);
-  const nDeuda = S.ventas.filter(v=>v.estado==='porcobrar'||v.estado==='abonada').length;
-  $('stPorCobrarSub').textContent = nDeuda ? nDeuda+' venta'+(nDeuda!==1?'s':'')+' pendiente'+(nDeuda!==1?'s':'') : 'al día';
-  $('stVentasMes').textContent = usd(ft.ventasMes);
-  $('stVentasMesSub').textContent = 'ganancia neta: '+usd(ft.gananciaNeta);
-
   const recent = [
     ...S.cotizaciones.map(d=>({...d,_t:'cot'})),
     ...S.solicitudes.map(d=>({...d,_t:'sol'})),
-    ...S.notas.map(d=>({...d,_t:'ne'})),
-    ...S.ventas.map(d=>({...d,_t:'vta'}))
+    ...S.notas.map(d=>({...d,_t:'ne'}))
   ].sort(byDate).slice(0,8);
-  $('recentList').innerHTML = recent.length ? recent.map(d=> d._t==='vta' ? ventaRow(d) : docRow(d,d._t)).join('')
+  $('recentList').innerHTML = recent.length ? recent.map(d=>docRow(d,d._t)).join('')
     : `<div class="empty">Aquí verás tus últimos documentos.<br>Empieza registrando clientes y proveedores en <b>Contactos</b>.</div>`;
 }
 
@@ -1891,7 +1507,7 @@ function renderAll(){
   updateProdDatalist();
   renderCotizar();
   renderNotas();
-  renderFinanzas();
+  renderVentas();
 }
 
 /* ===================== SERVICE WORKER ===================== */
@@ -1901,7 +1517,6 @@ if('serviceWorker' in navigator){
 
 $('brandTop').src = LOGO;
 $('brandSide').src = LOGO;
-$('brandLogin').src = LOGO;
 go('inicio');
 </script>
 </body>
