@@ -537,6 +537,7 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
         Guárdala en un lugar seguro de vez en cuando.
       </p>
       <button class="btn primary block" onclick="exportarRespaldo()">Descargar respaldo completo</button>
+      <button class="btn ghost block" style="margin-top:8px" onclick="restaurarRespaldo()">Restaurar desde un respaldo…</button>
     </div>
     <div class="card">
       <h3 style="font-size:15px; margin-bottom:4px">Sesión</h3>
@@ -2794,6 +2795,111 @@ function exportarRespaldo(){
   a.download = 'panaven-respaldo-'+hoyISO()+'.json';
   a.click();
   toast('Respaldo descargado: guárdalo en un lugar seguro');
+}
+
+/* ===================== RESTAURAR RESPALDO ===================== */
+const COLS_RESPALDO = ['clientes','proveedores','productos','solicitudes','cotizaciones','notas','ventas','gastos','compras'];
+
+function restaurarRespaldo(){
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'application/json,.json';
+  inp.onchange = async ()=>{
+    const f = inp.files[0]; if(!f) return;
+    let data;
+    try{ data = JSON.parse(await f.text()); }
+    catch(e){ return toast('El archivo no se pudo leer como respaldo', true); }
+    if(!data || data.sistema !== 'Panaven Administración')
+      return toast('Este archivo no es un respaldo de Panaven', true);
+    const resumen = COLS_RESPALDO.map(c=>({c, n: Array.isArray(data[c]) ? data[c].length : 0})).filter(x=>x.n);
+    const total = resumen.reduce((s,x)=> s+x.n, 0);
+    if(!total) return toast('El respaldo está vacío', true);
+    window._respaldo = data;
+    openModal(modalHead('Restaurar respaldo',
+      'Exportado: '+(data.exportado ? new Date(data.exportado).toLocaleString('es-VE') : 'fecha desconocida')) + `
+      <div class="dl">
+        ${resumen.map(x=>`<div class="r"><span>${esc(x.c)}</span><b>${x.n}</b></div>`).join('')}
+        <div class="r"><span><b>Total de registros</b></span><b>${total}</b></div>
+      </div>
+      <p style="color:var(--bad); font-size:13px; margin:10px 0; line-height:1.5">
+        ⚠️ Cada registro del respaldo <b>sobrescribe</b> al actual que tenga el mismo identificador.
+        Lo que exista hoy y no esté en el respaldo se conserva.
+        Las fotos de respaldo (órdenes, comprobantes) no viajan en este archivo.
+      </p>
+      <div class="actions">
+        <button class="btn danger block" id="btnRestaurar" onclick="ejecutarRestauracion()">Sí, restaurar ${total} registros</button>
+      </div>`);
+  };
+  inp.click();
+}
+
+async function ejecutarRestauracion(){
+  const data = window._respaldo; if(!data) return;
+  if(!confirm('Última confirmación: ¿restaurar el respaldo AHORA sobre la base de datos?')) return;
+  const btn = $('btnRestaurar'); btn.disabled = true; btn.textContent = 'Restaurando…';
+
+  // Las fechas viajan como texto ISO en el respaldo; aquí vuelven a ser fechas de Firestore
+  const FECHAS = new Set(['fecha','creado','actualizado']);
+  const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+  const revivir = (v, key)=>{
+    if(v === null || v === undefined) return v;
+    if(typeof v === 'string')
+      return (FECHAS.has(key) && ISO.test(v)) ? firebase.firestore.Timestamp.fromDate(new Date(v)) : v;
+    if(Array.isArray(v)) return v.map(x=> revivir(x, ''));
+    if(typeof v === 'object'){ const o={}; for(const k in v) o[k]=revivir(v[k], k); return o; }
+    return v;
+  };
+
+  try{
+    let ops = [], hechos = 0, total = 0;
+    COLS_RESPALDO.forEach(c=> total += (data[c]||[]).length);
+    const flush = async ()=>{
+      if(!ops.length) return;
+      const b = db.batch(); ops.forEach(f=> f(b)); await b.commit(); ops = [];
+    };
+    for(const c of COLS_RESPALDO){
+      for(const doc of (data[c]||[])){
+        const {id, ...resto} = doc; if(!id) continue;
+        const limpio = revivir(resto, '');
+        ops.push(b=> b.set(db.collection(c).doc(id), limpio));
+        hechos++;
+        if(ops.length >= 400){ btn.textContent = 'Restaurando… '+hechos+' / '+total; await flush(); }
+      }
+    }
+    await flush();
+
+    // Configuración (tasa, IVA, datos de la empresa)
+    if(data.config) await db.collection('config').doc('general').set({
+      tasa: data.config.tasa||0, iva: data.config.iva ?? 16,
+      empresa: data.config.empresa || {}
+    }, {merge:true});
+
+    // Recalibrar la numeración: nunca por debajo del máximo restaurado NI del contador actual
+    const maxNum = arr => (arr||[]).reduce((m,d)=>{
+      const x = String(d.numero||'').match(/(\d+)\s*$/); return Math.max(m, x?parseInt(x[1],10):0);
+    }, 0);
+    const pagosNums = arr => (arr||[]).flatMap(d=> (d.pagos||[]).map(p=>({numero:p.numero})));
+    const nuevos = {
+      cot: maxNum(data.cotizaciones), sol: maxNum(data.solicitudes), ne: maxNum(data.notas),
+      vta: maxNum(data.ventas), com: maxNum(data.compras),
+      rec: maxNum(pagosNums(data.ventas)), pp: maxNum(pagosNums(data.compras))
+    };
+    const cref = db.collection('config').doc('counters');
+    await db.runTransaction(async t=>{
+      const d = await t.get(cref);
+      const cur = d.exists ? d.data() : {};
+      const fin = {};
+      Object.keys(nuevos).forEach(k=> fin[k] = Math.max(nuevos[k]||0, cur[k]||0));
+      t.set(cref, fin, {merge:true});
+    });
+
+    window._respaldo = null;
+    closeModal();
+    toast('Respaldo restaurado: '+hechos+' registros');
+  }catch(e){
+    console.error('ejecutarRestauracion', e);
+    toast('La restauración se interrumpió: revisa la conexión y reintenta (es seguro repetirla)', true);
+    btn.disabled = false; btn.textContent = 'Reintentar restauración';
+  }
 }
 
 /* ===================== REPORTE DEL MES ===================== */
