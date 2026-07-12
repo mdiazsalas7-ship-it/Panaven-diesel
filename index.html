@@ -472,6 +472,7 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
     <div class="tabs" id="tabs-ventas">
       <button data-sub="ventas" class="active" onclick="setSubTab('ventas','ventas')">Ventas</button>
       <button data-sub="porcobrar" onclick="setSubTab('ventas','porcobrar')">Por cobrar</button>
+      <button data-sub="caja" onclick="setSubTab('ventas','caja')">Caja</button>
     </div>
     <div class="search">
       <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -2149,6 +2150,99 @@ function renderCotizar(){
   }
 }
 
+/* ===================== CORTE DE CAJA DIARIO ===================== */
+let cajaDia = hoyISO(); // día que se está viendo en la pestaña Caja
+
+const tsDia = t => {                       // Timestamp → 'YYYY-MM-DD' local
+  const d = t?.toDate ? t.toDate() : null; if(!d) return '';
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+};
+const fhora = t => {
+  const d = t?.toDate ? t.toDate() : null;
+  return d ? d.toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'}) : '';
+};
+const diaLabel = iso => {
+  const [y,m,d] = iso.split('-').map(Number);
+  return new Date(y, m-1, d).toLocaleDateString('es-VE',{weekday:'long', day:'numeric', month:'long'});
+};
+function cambiarDia(paso){
+  const [y,m,d] = cajaDia.split('-').map(Number);
+  const nd = new Date(y, m-1, d+paso);
+  const nuevo = nd.getFullYear()+'-'+String(nd.getMonth()+1).padStart(2,'0')+'-'+String(nd.getDate()).padStart(2,'0');
+  if(nuevo > hoyISO()) return;
+  cajaDia = nuevo;
+  renderVentas();
+}
+
+function renderCaja(box){
+  // Movimientos del día: abonos (de ventas activas) + gastos
+  const movs = [];
+  S.ventas.filter(v=>v.estado!=='anulada').forEach(v=> (v.pagos||[]).forEach(p=>{
+    if(tsDia(p.fecha)===cajaDia) movs.push({t:'abono', v, p});
+  }));
+  S.gastos.forEach(g=>{ if((g.fechaISO||'')===cajaDia) movs.push({t:'gasto', g}); });
+
+  // Entradas por método (las retenciones van aparte: no son efectivo)
+  const porMetodo = {};
+  let entradas = 0, retenido = 0;
+  movs.filter(m=>m.t==='abono').forEach(({p})=>{
+    if(p.metodo === 'Retención de IVA'){ retenido += (p.montoUsd||0); return; }
+    entradas += (p.montoUsd||0);
+    const k = p.metodo || 'Otro';
+    (porMetodo[k] = porMetodo[k] || {usd:0, bs:0, n:0});
+    porMetodo[k].usd += (p.montoUsd||0);
+    if(p.moneda==='Bs') porMetodo[k].bs += (p.monto||0);
+    porMetodo[k].n++;
+  });
+  const salidas = movs.filter(m=>m.t==='gasto').reduce((s,{g})=> s+(g.montoUsd||0), 0);
+  const neto = entradas - salidas;
+  const esHoy = cajaDia === hoyISO();
+  const hora = m => m.t==='abono' ? (m.p.fecha?.toDate?.()?.getTime()||0) : (m.g.fecha?.toDate?.()?.getTime()||0);
+
+  box.innerHTML = `
+    <div class="section-title" style="margin-top:4px">
+      <h2 style="font-size:14.5px; text-transform:capitalize">${diaLabel(cajaDia)}${esHoy?' · hoy':''}</h2>
+      <div class="mes-nav">
+        <button onclick="cambiarDia(-1)" title="Día anterior">‹</button>
+        <button onclick="cajaDia=hoyISO();renderVentas()" style="width:auto; padding:0 10px; font-size:11px; font-weight:800">HOY</button>
+        <button onclick="cambiarDia(1)" ${esHoy?'disabled':''} title="Día siguiente">›</button>
+      </div>
+    </div>
+    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat"><small>Entró</small><b style="color:var(--ok)">${usd(entradas)}</b></div>
+      <div class="stat"><small>Salió</small><b style="color:var(--bad)">${usd(salidas)}</b></div>
+      <div class="stat"><small>Neto del día</small>
+        <b style="color:${neto>0.009?'var(--ok)':(neto<-0.009?'var(--bad)':'inherit')}">${usd(neto)}</b></div>
+    </div>
+    ${retenido>0.009?`<p style="color:var(--muted); font-size:12px; margin:2px 2px 10px">
+      + ${usd(retenido)} recibidos en retenciones de IVA (crédito fiscal, no efectivo).</p>`:''}
+    ${Object.keys(porMetodo).length?`
+    <div class="card" style="margin:10px 0 14px">
+      <h3 style="font-size:13.5px; margin-bottom:8px">Entradas por método</h3>
+      ${Object.entries(porMetodo).sort((a,b)=>b[1].usd-a[1].usd).map(([m,d])=>`
+        <div class="rep-row"><span>${esc(m)} (${d.n})</span>
+        <b>${usd(d.usd)}${d.bs?` <small style="color:var(--muted); font-weight:600">· ${bs(d.bs)}</small>`:''}</b></div>`).join('')}
+    </div>`:''}
+    ${movs.length ? movs.sort((a,b)=> hora(b)-hora(a)).map(m=>{
+      if(m.t==='abono'){
+        const esRet = m.p.metodo==='Retención de IVA';
+        return `<div class="item-row" onclick="openPago('${m.v.id}','${m.p.id}')">
+          <div class="avatar" style="background:${esRet?'var(--brand-soft)':'var(--ok-soft)'}; color:${esRet?'var(--brand)':'var(--ok)'}">＋</div>
+          <div class="info"><b>${esc(m.v.contactoNombre||'—')}</b>
+            <small>${fhora(m.p.fecha)} · ${esc(m.p.metodo)} · venta ${esc(m.v.numero)}</small></div>
+          <div class="right"><b style="color:${esRet?'var(--brand)':'var(--ok)'}">+${usd(m.p.montoUsd)}</b>
+            ${m.p.moneda==='Bs'?`<small>${bs(m.p.monto)}</small>`:''}</div>
+        </div>`;
+      }
+      return `<div class="item-row" onclick="openGasto('${m.g.id}')">
+        <div class="avatar" style="background:var(--bad-soft); color:var(--bad)">−</div>
+        <div class="info"><b>${esc(m.g.desc)}</b><small>${esc(m.g.categoria||'gasto')} · ${esc(m.g.metodo||'')}</small></div>
+        <div class="right"><b style="color:var(--bad)">−${usd(m.g.montoUsd)}</b>
+          ${m.g.moneda==='Bs'?`<small>${bs(m.g.monto)}</small>`:''}</div>
+      </div>`;
+    }).join('') : `<div class="empty">Sin movimientos este día.</div>`}`;
+}
+
 function renderVentas(){
   const q = ($('qVentas')?.value||'').toLowerCase();
   const box = $('listVentas'); if(!box) return;
@@ -2158,6 +2252,12 @@ function renderVentas(){
     .reduce((s,v)=> s + (v.saldo!=null?v.saldo:v.total), 0);
   const chip = $('ventasResumen');
   if(chip) chip.textContent = porCobrar>0 ? 'Por cobrar: '+usd(porCobrar) : (S.ventas.length?'todo cobrado':'');
+
+  // El buscador no aplica en el corte de caja
+  const sw = $('qVentas');
+  if(sw && sw.parentElement) sw.parentElement.style.display = (S.sub.ventas==='caja') ? 'none' : '';
+
+  if(S.sub.ventas==='caja'){ renderCaja(box); return; }
 
   if(S.sub.ventas==='porcobrar'){
     // Deudas agrupadas por cliente, de mayor a menor
