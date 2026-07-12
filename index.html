@@ -1356,6 +1356,26 @@ async function nextVentaNumber(){
 
 // Registrar venta: nace de una cotización. Crea la VENTA y su NOTA DE ENTREGA
 // de un solo golpe (batch atómico) y enlaza todo con la cotización de origen.
+// Calcula los totales de la venta según la vertiente elegida (con o sin IVA)
+function ventaCalc(c, conIva){
+  const subtotal = c.subtotal!=null ? c.subtotal
+    : (c.items||[]).reduce((s,i)=> s + (num(i.cant)||0)*(num(i.precio)||0), 0);
+  const ivaPct = c.ivaPct || S.config.iva || 16;
+  const iva = conIva ? r2(subtotal*ivaPct/100) : 0;
+  return {subtotal: r2(subtotal), ivaPct, iva, total: r2(subtotal+iva)};
+}
+function vTipoChange(cotId){
+  const c = S.cotizaciones.find(x=>x.id===cotId); if(!c) return;
+  const conIva = $('vTipo').value === 'fiscal';
+  const t = ventaCalc(c, conIva);
+  const tasa = c.tasa || S.config.tasa || 0;
+  $('vResumen').innerHTML = `
+    <div class="r"><span>Subtotal</span><b>${usd(t.subtotal)}</b></div>
+    ${conIva?`<div class="r"><span>IVA ${t.ivaPct}%</span><b>${usd(t.iva)}</b></div>`:''}
+    <div class="r"><span><b>Total de la venta</b></span><b>${usd(t.total)}</b></div>
+    ${tasa?`<div class="r"><span>En bolívares (tasa ${money(tasa)})</span><b>${bs(t.total*tasa)}</b></div>`:''}`;
+}
+
 function registrarVenta(cotId){
   const c = S.cotizaciones.find(x=>x.id===cotId); if(!c) return;
   if(c.ventaId){
@@ -1363,10 +1383,12 @@ function registrarVenta(cotId){
   }
   if(!c.items || !c.items.length) return toast('La cotización no tiene artículos', true);
   openModal(modalHead('Registrar venta', 'Cotización '+c.numero+' · '+(c.contactoNombre||'')) + `
-    <div class="dl">
-      <div class="r"><span>Total de la venta</span><b>${usd(c.total)}</b></div>
-      ${c.tasa?`<div class="r"><span>En bolívares (tasa ${money(c.tasa)})</span><b>${bs(c.total*c.tasa)}</b></div>`:''}
-    </div>
+    <label class="f">Tipo de venta *</label>
+    <select class="f" id="vTipo" onchange="vTipoChange('${cotId}')">
+      <option value="fiscal" ${c.conIva?'selected':''}>Con IVA (facturable)</option>
+      <option value="nota" ${!c.conIva?'selected':''}>Sin IVA — solo nota de entrega</option>
+    </select>
+    <div class="dl" id="vResumen"></div>
     <label class="f">Orden de compra del cliente (foto o PDF) *</label>
     <input class="f" id="vOrden" type="file" accept="image/*,application/pdf">
     <p style="color:var(--muted); font-size:12px; margin:6px 0 0">
@@ -1375,11 +1397,14 @@ function registrarVenta(cotId){
     <div class="actions">
       <button class="btn primary block" id="btnConfVenta" onclick="confirmarVenta('${cotId}')">Crear venta + nota de entrega</button>
     </div>`);
+  vTipoChange(cotId);
 }
 
 async function confirmarVenta(cotId){
   const c = S.cotizaciones.find(x=>x.id===cotId); if(!c) return;
   if(c.ventaId) return toast('Esta cotización ya generó una venta', true);
+  const conIva = $('vTipo')?.value === 'fiscal';
+  const t = ventaCalc(c, conIva);
   const file = $('vOrden')?.files[0];
   if(!file && !confirm('No adjuntaste la orden de compra del cliente.\n\n¿Registrar la venta SIN ese respaldo? (podrás adjuntarla después)')) return;
   const btn = $('btnConfVenta');
@@ -1400,12 +1425,13 @@ async function confirmarVenta(cotId){
       numero: ventaNum,
       contactoId: c.contactoId, contactoNombre: c.contactoNombre || '',
       items: c.items.map(i=>({...i})),
-      conIva: !!c.conIva, ivaPct: c.ivaPct || S.config.iva || 16,
-      subtotal: c.subtotal, iva: c.iva || 0, total: c.total,
+      conIva: conIva, ivaPct: t.ivaPct,
+      tipoVenta: conIva ? 'fiscal' : 'nota',   // las dos vertientes
+      subtotal: t.subtotal, iva: t.iva, total: t.total,
       tasa: c.tasa || S.config.tasa || 0,
       cotizacionId: c.id, cotizacionNum: c.numero,
       notaId: notaRef.id, notaNum,
-      pagos: [], abonado: 0, saldo: c.total,
+      pagos: [], abonado: 0, saldo: t.total,
       orden: orden,                // orden de compra del cliente {url, tipo, nombre} o null
       estadoPago: 'pendiente',     // pendiente | abonada | pagada
       estado: 'activa',            // activa | anulada
@@ -1453,6 +1479,7 @@ function openVenta(id){
     <span class="badge ${pagoBadge(v)}">${pagoLabel(v)}</span>
     <div class="dl">
       <div class="r"><span>Fecha</span><b>${fdate(v.fecha)}</b></div>
+      <div class="r"><span>Tipo</span><b>${v.conIva===false ? 'Sin IVA — solo nota de entrega' : 'Con IVA (facturable)'}</b></div>
       ${v.cotizacionNum?`<div class="r"><span>Cotización</span><b>${esc(v.cotizacionNum)}</b></div>`:''}
       ${v.notaNum?`<div class="r"><span>Nota de entrega</span><b>${esc(v.notaNum)}${nota?' · '+nota.estado:''}</b></div>`:''}
       ${v.orden?`<div class="r"><span>Orden de compra</span><b style="color:var(--brand); cursor:pointer" onclick="verArchivo('${v.orden.fid||''}','${v.orden.url||''}')">Ver respaldo 📎</b></div>`:''}
