@@ -2016,7 +2016,13 @@ function openCompra(id){
       <div class="r"><span>Pagado</span><b>${usd(c.abonado||0)}</b></div>
       <div class="r"><span><b>Saldo por pagar</b></span><b>${usd(saldo)}</b></div>
       ${c.factura?`<div class="r"><span>Factura del proveedor</span><b style="color:var(--brand); cursor:pointer" onclick="verArchivo('${c.factura.fid||''}','${c.factura.url||''}')">Ver respaldo 📎</b></div>`:''}
+      <div class="r"><span>Mercancía</span><b style="color:${c.recibida?'var(--ok)':'var(--warn)'}">${c.recibida?'Recibida ✓ '+(c.recepcion?fdate(c.recepcion.fecha):''):'Por recibir'}</b></div>
     </div>
+    ${(c.recibida && c.recepcion?.items?.length)?`
+    <label class="f">Entró al inventario</label>
+    <div class="dl">
+      ${c.recepcion.items.map(it=>`<div class="r"><span>${esc(it.nombre)}</span><b>+${money(it.cant)}${it.costo!=null?` <small style="color:var(--muted)">@ ${usd(it.costo)}</small>`:''}</b></div>`).join('')}
+    </div>`:''}
     ${(c.pagos&&c.pagos.length)?`
     <label class="f">Pagos realizados (toca uno para verlo)</label>
     <div class="dl">
@@ -2025,6 +2031,7 @@ function openCompra(id){
         <b>${usd(p.montoUsd)}</b></div>`).join('')}
     </div>`:''}
     <div class="doc-actions">
+      ${(!c.recibida && c.estado!=='anulada')?`<button class="btn ok" style="grid-column:1/-1" onclick="recibirForm('${id}')">Recibir mercancía 📦 (entra al inventario)</button>`:''}
       ${(c.estado!=='anulada' && saldo>0.009)?`<button class="btn primary" style="grid-column:1/-1" onclick="pagoCompraForm('${id}')">Registrar pago</button>`:''}
       ${(!c.factura && c.estado!=='anulada')?`<button class="btn ghost" style="grid-column:1/-1" onclick="adjuntarFactura('${id}')">Adjuntar factura 📎</button>`:''}
       ${(!c.pagos||!c.pagos.length)?`<button class="btn danger" style="grid-column:1/-1" onclick="delCompra('${id}')">Eliminar compra</button>`
@@ -2054,10 +2061,110 @@ async function delCompra(id){
   closeModal(); toast('Compra eliminada');
 }
 async function anularCompra(id){
-  if(!confirm('Esta compra tiene pagos registrados. ¿Anularla de todas formas? (los pagos quedan en el historial)')) return;
-  await db.collection('compras').doc(id).update({estado:'anulada',
-    actualizado: firebase.firestore.FieldValue.serverTimestamp()});
-  closeModal(); toast('Compra anulada');
+  const c = S.compras.find(x=>x.id===id); if(!c) return;
+  const msg = c.recibida
+    ? 'Esta compra ya entró al inventario: al anularla, esas cantidades SALDRÁN del stock. ¿Anular de todas formas?'
+    : 'Esta compra tiene pagos registrados. ¿Anularla de todas formas? (los pagos quedan en el historial)';
+  if(!confirm(msg)) return;
+  try{
+    const batch = db.batch();
+    if(c.recibida && c.recepcion?.items){
+      c.recepcion.items.forEach(it=>{
+        if(it.productoId) batch.update(db.collection('productos').doc(it.productoId),
+          {stock: firebase.firestore.FieldValue.increment(-(it.cant||0))});
+      });
+    }
+    batch.update(db.collection('compras').doc(id), {estado:'anulada', recibida:false,
+      actualizado: firebase.firestore.FieldValue.serverTimestamp()});
+    await batch.commit();
+    closeModal(); toast('Compra anulada'+(c.recibida?' · el stock se revirtió':''));
+  }catch(e){ console.error('anularCompra', e); toast('No se pudo anular la compra', true); }
+}
+
+/* --- Recepción de mercancía: las cantidades de la compra entran al inventario --- */
+let recCompraId = null, recLines = [];
+
+function recibirForm(cid){
+  const c = S.compras.find(x=>x.id===cid); if(!c) return;
+  if(c.recibida) return toast('Esta compra ya fue recibida', true);
+  if(!S.productos.length) return toast('Primero registra los productos en Inventario', true);
+  recCompraId = cid;
+  recLines = [{productoId: S.productos[0]?.id||'', cant:'', costo:''}];
+  openModal(modalHead('Recibir mercancía', 'Compra '+c.numero+' · '+(c.proveedorNombre||'')) + `
+    <p style="color:var(--muted); font-size:13px; margin:0 0 10px">
+      Indica qué llegó y cuánto: las cantidades <b>entran al inventario</b> de una vez.
+    </p>
+    <div id="recBox"></div>
+    <button class="btn ghost block" onclick="recAdd()">+ Agregar otro producto</button>
+    <p style="color:var(--muted); font-size:12px; margin:8px 0 0">
+      El costo unitario es opcional: si lo indicas, queda guardado como costo del producto
+      (la base para calcular ganancias).
+    </p>
+    <div class="actions">
+      <button class="btn primary block" id="btnRecibir" onclick="confirmarRecepcion()">Registrar entrada al inventario</button>
+    </div>`);
+  recDraw();
+}
+function recDraw(){
+  const box = $('recBox'); if(!box) return;
+  box.innerHTML = recLines.map((l,i)=>`
+    <div class="card" style="padding:10px; margin:0 0 8px">
+      <select class="f" onchange="recLines[${i}].productoId=this.value; recDraw()">
+        ${S.productos.slice().sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'')).map(p=>
+          `<option value="${p.id}" ${l.productoId===p.id?'selected':''}>${esc(p.nombre)}${p.stock!=null?' — stock: '+money(p.stock):''}</option>`).join('')}
+      </select>
+      <div class="grid2" style="margin-top:6px">
+        <input class="f" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Cantidad *"
+          value="${l.cant}" oninput="recLines[${i}].cant=this.value">
+        <input class="f" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Costo unit. $ (opc.)"
+          value="${l.costo}" oninput="recLines[${i}].costo=this.value">
+      </div>
+      ${recLines.length>1?`<button class="btn danger block" style="margin-top:6px; padding:8px"
+        onclick="recLines.splice(${i},1); recDraw()">Quitar esta línea</button>`:''}
+    </div>`).join('');
+}
+function recAdd(){
+  recLines.push({productoId: S.productos[0]?.id||'', cant:'', costo:''});
+  recDraw();
+}
+async function confirmarRecepcion(){
+  const c = S.compras.find(x=>x.id===recCompraId); if(!c) return;
+  const items = [];
+  for(const l of recLines){
+    const p = S.productos.find(x=>x.id===l.productoId);
+    const cant = num(l.cant);
+    if(!p) return toast('Elige el producto en cada línea', true);
+    if(cant<=0) return toast('Indica la cantidad de "'+p.nombre+'"', true);
+    items.push({productoId: p.id, nombre: p.nombre, cant: r2(cant),
+      costo: num(l.costo)>0 ? r2(num(l.costo)) : null});
+  }
+  // No permitir el mismo producto dos veces (confunde el conteo)
+  const ids = items.map(i=>i.productoId);
+  if(new Set(ids).size !== ids.length) return toast('Hay un producto repetido: júntalo en una sola línea', true);
+  const btn = $('btnRecibir');
+  btn.disabled = true; btn.textContent = 'Registrando…';
+  try{
+    const batch = db.batch();
+    items.forEach(it=>{
+      const upd = {stock: firebase.firestore.FieldValue.increment(it.cant),
+        actualizado: firebase.firestore.FieldValue.serverTimestamp()};
+      if(it.costo != null) upd.costo = it.costo;   // último costo de compra
+      batch.update(db.collection('productos').doc(it.productoId), upd);
+    });
+    batch.update(db.collection('compras').doc(recCompraId), {
+      recibida: true,
+      recepcion: {fecha: firebase.firestore.Timestamp.now(), items},
+      actualizado: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    await batch.commit();
+    closeModal();
+    toast('Mercancía recibida: el inventario se actualizó');
+    setTimeout(()=> openCompra(recCompraId), 200);
+  }catch(e){
+    console.error('confirmarRecepcion', e);
+    toast('No se pudo registrar la recepción', true);
+    btn.disabled = false; btn.textContent = 'Registrar entrada al inventario';
+  }
 }
 
 /* --- Pagos de compras (espejo de los abonos de ventas) --- */
@@ -2289,7 +2396,7 @@ function compraRow(c){
   return `<div class="item-row" onclick="openCompra('${c.id}')">
     <span class="docnum com">${esc(c.numero)}</span>
     <div class="info"><b>${esc(c.proveedorNombre||'—')}</b>
-      <small>${fdate(c.fecha)} · <span class="badge ${badge}">${btxt}</span></small></div>
+      <small>${fdate(c.fecha)} · <span class="badge ${badge}">${btxt}</span>${c.recibida?' 📦':''}</small></div>
     <div class="right"><b>${usd(c.total)}</b><small>${saldo>0.009?'debe '+usd(saldo):'pagada'}</small></div>
   </div>`;
 }
