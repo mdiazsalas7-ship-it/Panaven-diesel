@@ -138,6 +138,7 @@ nav.bottom button.active{color:var(--brand); background:var(--brand-soft)}
 .docnum.sol{background:#6d28d9}
 .docnum.ne{background:#0f766e}
 .docnum.vta{background:#0f9d58}
+.docnum.com{background:#b45309}
 
 .badge{display:inline-block; font-size:10.5px; font-weight:800; letter-spacing:.04em; padding:3px 8px; border-radius:99px; text-transform:uppercase}
 .badge.borrador{background:var(--gray-soft); color:var(--muted)}
@@ -486,13 +487,18 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
 
   <!-- ============ GASTOS ============ -->
   <section id="view-gastos" style="display:none">
-    <div class="section-title"><h2>Gastos</h2><small id="gastosResumen"></small></div>
+    <div class="section-title"><h2>Gastos y compras</h2><small id="gastosResumen"></small></div>
+    <div class="tabs" id="tabs-gastos">
+      <button data-sub="gastos" class="active" onclick="setSubTab('gastos','gastos')">Gastos</button>
+      <button data-sub="compras" onclick="setSubTab('gastos','compras')">Compras</button>
+      <button data-sub="porpagar" onclick="setSubTab('gastos','porpagar')">Por pagar</button>
+    </div>
     <div class="fab-row">
-      <button class="btn primary block" onclick="gastoForm()">+ Registrar gasto</button>
+      <button class="btn primary block" id="btnNewGasto" onclick="newGastoFromTab()">+ Registrar gasto</button>
     </div>
     <div class="search">
       <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input id="qGastos" placeholder="Buscar por descripción o categoría…" oninput="renderGastos()">
+      <input id="qGastos" placeholder="Buscar…" oninput="renderGastos()">
     </div>
     <div id="listGastos"></div>
   </section>
@@ -599,10 +605,10 @@ const LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA+gAAACyCAMAAADmgBXa
 /* ===================== ESTADO ===================== */
 const S = {
   clientes: [], proveedores: [], productos: [],
-  solicitudes: [], cotizaciones: [], notas: [], ventas: [], gastos: [],
+  solicitudes: [], cotizaciones: [], notas: [], ventas: [], gastos: [], compras: [],
   config: { tasa: 0, empresa: {nombre:'Panaven', rif:'', tel:'', dir:''}, iva: 16 },
   view: 'inicio',
-  sub: { contactos:'clientes', cotizar:'cotizaciones', ventas:'ventas' },
+  sub: { contactos:'clientes', cotizar:'cotizaciones', ventas:'ventas', gastos:'gastos' },
   editLines: []   // líneas del documento en edición
 };
 
@@ -656,10 +662,18 @@ function setSubTab(group, sub){
     $('btnNewDoc').textContent = sub==='cotizaciones' ? '+ Nueva cotización'
       : sub==='solicitudes' ? '+ Nueva solicitud a proveedor' : '+ Nueva nota de entrega';
     renderCotizar();
+  } else if(group==='gastos'){
+    const b = $('btnNewGasto');
+    if(b){
+      b.style.display = sub==='porpagar' ? 'none' : '';
+      b.textContent = sub==='gastos' ? '+ Registrar gasto' : '+ Registrar compra';
+    }
+    renderGastos();
   } else {
     renderVentas();
   }
 }
+function newGastoFromTab(){ S.sub.gastos==='compras' ? compraForm() : gastoForm(); }
 function newDocFromTab(){
   const s = S.sub.cotizar;
   s==='cotizaciones' ? newCotizacion() : s==='solicitudes' ? newSolicitud() : newNota();
@@ -685,6 +699,7 @@ function startApp(){
   listen('notas','notas');
   listen('ventas','ventas');
   listen('gastos','gastos');
+  listen('compras','compras');
 }
 
 auth.onAuthStateChanged(user=>{
@@ -798,7 +813,7 @@ async function nextNumber(tipo){ // 'cot' | 'sol' | 'ne'
     t.set(ref, {[tipo]: cur+1}, {merge:true});
     return cur+1;
   });
-  const pref = {cot:'COT', sol:'SC', ne:'NE', vta:'VTA', rec:'REC'}[tipo];
+  const pref = {cot:'COT', sol:'SC', ne:'NE', vta:'VTA', rec:'REC', com:'C', pp:'PP'}[tipo];
   return pref + '-' + String(n).padStart(4,'0');
 }
 
@@ -1913,6 +1928,264 @@ function waSend(tel, txt){
   window.open(base + '?text=' + encodeURIComponent(txt), '_blank');
 }
 
+/* ===================== COMPRAS A PROVEEDORES ===================== */
+function compraForm(){
+  if(!S.proveedores.length) return toast('Primero registra el proveedor en Contactos', true);
+  openModal(modalHead('Registrar compra', 'Lo que Panaven le compra (y debe) a un proveedor.') + `
+    <label class="f">Proveedor *</label>
+    <select class="f" id="cProv">
+      ${S.proveedores.map(p=>`<option value="${p.id}">${esc(p.nombre)}</option>`).join('')}
+    </select>
+    <label class="f">Fecha *</label>
+    <input class="f" id="cFecha" type="date" value="${hoyISO()}">
+    <label class="f">Descripción *</label>
+    <input class="f" id="cDesc" placeholder="Ej. 10 inyectores Bosch serie 0445">
+    <label class="f">Moneda</label>
+    <select class="f" id="cMoneda" onchange="compraPreview()">
+      <option value="USD">Dólares (USD)</option>
+      <option value="Bs">Bolívares (Bs)</option>
+    </select>
+    <label class="f">Monto total *</label>
+    <input class="f" id="cMonto" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" oninput="compraPreview()">
+    <label class="f">Tasa Bs/USD (para convertir)</label>
+    <input class="f" id="cTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${S.config.tasa||''}" oninput="compraPreview()">
+    <label class="f">Factura del proveedor (foto o PDF)</label>
+    <input class="f" id="cFactura" type="file" accept="image/*,application/pdf">
+    <div class="dl" id="cPreview"></div>
+    <div class="actions">
+      <button class="btn primary block" id="btnCompra" onclick="saveCompra()">Registrar compra</button>
+    </div>`);
+}
+function compraPreview(){
+  const box = $('cPreview'); if(!box) return;
+  const monto = num($('cMonto').value);
+  const moneda = $('cMoneda').value;
+  const tasa = num($('cTasa').value) || S.config.tasa || 0;
+  if(monto<=0){ box.innerHTML=''; return; }
+  const usdVal = moneda==='Bs' ? (tasa>0 ? monto/tasa : 0) : monto;
+  box.innerHTML = `<div class="r"><span>Deuda en dólares</span><b>${usd(usdVal)}${moneda==='Bs'&&tasa<=0?' — falta la tasa':''}</b></div>`;
+}
+
+async function saveCompra(){
+  const desc = $('cDesc').value.trim();
+  if(!desc) return toast('Escribe qué compraste', true);
+  const monto = num($('cMonto').value);
+  if(monto<=0) return toast('Indica el monto', true);
+  const moneda = $('cMoneda').value;
+  const tasa = num($('cTasa').value) || S.config.tasa || 0;
+  if(moneda==='Bs' && tasa<=0) return toast('Indica la tasa Bs/USD para convertir', true);
+  const prov = S.proveedores.find(p=>p.id===$('cProv').value);
+  if(!prov) return toast('Elige el proveedor', true);
+  const file = $('cFactura')?.files[0];
+  const btn = $('btnCompra');
+  btn.disabled = true; btn.textContent = file ? 'Subiendo factura…' : 'Guardando…';
+  try{
+    let factura = null;
+    if(file){ factura = await subirArchivo(file, 'compras/fact-'+Date.now()); btn.textContent='Guardando…'; }
+    const total = r2(moneda==='Bs' ? monto/tasa : monto);
+    const fechaISO = $('cFecha').value || hoyISO();
+    const [y,m,d] = fechaISO.split('-').map(Number);
+    const numero = await nextNumber('com');
+    await db.collection('compras').add({
+      numero,
+      proveedorId: prov.id, proveedorNombre: prov.nombre,
+      desc, moneda, monto: r2(monto), tasa: r2(tasa), total,
+      fechaISO, fecha: firebase.firestore.Timestamp.fromDate(new Date(y, m-1, d, 12)),
+      factura,
+      pagos: [], abonado: 0, saldo: total,
+      estadoPago: 'pendiente', estado: 'activa',
+      creado: firebase.firestore.FieldValue.serverTimestamp(),
+      actualizado: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    closeModal(); toast('Compra '+numero+' registrada');
+  }catch(e){
+    console.error('saveCompra', e); toast(e.message||'No se pudo registrar la compra', true);
+    btn.disabled = false; btn.textContent = 'Registrar compra';
+  }
+}
+
+function openCompra(id){
+  const c = S.compras.find(x=>x.id===id); if(!c) return;
+  const saldo = c.saldo!=null ? c.saldo : c.total;
+  openModal(modalHead('Compra '+c.numero, 'Proveedor: '+(c.proveedorNombre||'—')) + `
+    <span class="badge ${c.estado==='anulada'?'anulada':(c.estadoPago||'pendiente')}">${c.estado==='anulada'?'anulada':({pendiente:'por pagar', abonada:'abonada', pagada:'pagada'}[c.estadoPago]||'por pagar')}</span>
+    <div class="dl">
+      <div class="r"><span>Fecha</span><b>${fdate(c.fecha)}</b></div>
+      <div class="r"><span>Descripción</span><b>${esc(c.desc)}</b></div>
+      <div class="r"><span>Total</span><b>${usd(c.total)}${c.moneda==='Bs'?` <small>(${bs(c.monto)})</small>`:''}</b></div>
+      <div class="r"><span>Pagado</span><b>${usd(c.abonado||0)}</b></div>
+      <div class="r"><span><b>Saldo por pagar</b></span><b>${usd(saldo)}</b></div>
+      ${c.factura?`<div class="r"><span>Factura del proveedor</span><b style="color:var(--brand); cursor:pointer" onclick="verArchivo('${c.factura.fid||''}','${c.factura.url||''}')">Ver respaldo 📎</b></div>`:''}
+    </div>
+    ${(c.pagos&&c.pagos.length)?`
+    <label class="f">Pagos realizados (toca uno para verlo)</label>
+    <div class="dl">
+      ${c.pagos.map(p=>`<div class="r" style="cursor:pointer" onclick="openPagoCompra('${id}','${p.id}')">
+        <span>${esc(p.numero||'')} · ${fdate(p.fecha)} · ${esc(p.metodo)}${p.comp?' 📎':''}</span>
+        <b>${usd(p.montoUsd)}</b></div>`).join('')}
+    </div>`:''}
+    <div class="doc-actions">
+      ${(c.estado!=='anulada' && saldo>0.009)?`<button class="btn primary" style="grid-column:1/-1" onclick="pagoCompraForm('${id}')">Registrar pago</button>`:''}
+      ${(!c.factura && c.estado!=='anulada')?`<button class="btn ghost" style="grid-column:1/-1" onclick="adjuntarFactura('${id}')">Adjuntar factura 📎</button>`:''}
+      ${(!c.pagos||!c.pagos.length)?`<button class="btn danger" style="grid-column:1/-1" onclick="delCompra('${id}')">Eliminar compra</button>`
+        :(c.estado!=='anulada'?`<button class="btn danger" style="grid-column:1/-1" onclick="anularCompra('${id}')">Anular compra</button>`:'')}
+    </div>`);
+}
+function adjuntarFactura(cid){
+  const inp = document.createElement('input');
+  inp.type='file'; inp.accept='image/*,application/pdf';
+  inp.onchange = async ()=>{
+    const f = inp.files[0]; if(!f) return;
+    toast('Subiendo factura…');
+    try{
+      const factura = await subirArchivo(f, 'compras/fact-'+Date.now());
+      await db.collection('compras').doc(cid).update({factura,
+        actualizado: firebase.firestore.FieldValue.serverTimestamp()});
+      toast('Factura adjuntada'); setTimeout(()=> openCompra(cid), 300);
+    }catch(e){ toast(e.message||'No se pudo subir', true); }
+  };
+  inp.click();
+}
+async function delCompra(id){
+  if(!confirm('¿Eliminar esta compra definitivamente?')) return;
+  const c = S.compras.find(x=>x.id===id);
+  if(c?.factura?.fid) borrarArchivo(c.factura.fid);
+  await db.collection('compras').doc(id).delete();
+  closeModal(); toast('Compra eliminada');
+}
+async function anularCompra(id){
+  if(!confirm('Esta compra tiene pagos registrados. ¿Anularla de todas formas? (los pagos quedan en el historial)')) return;
+  await db.collection('compras').doc(id).update({estado:'anulada',
+    actualizado: firebase.firestore.FieldValue.serverTimestamp()});
+  closeModal(); toast('Compra anulada');
+}
+
+/* --- Pagos de compras (espejo de los abonos de ventas) --- */
+let pagoCompraId = null;
+function pagoCompraForm(cid){
+  const c = S.compras.find(x=>x.id===cid); if(!c) return;
+  pagoCompraId = cid;
+  const saldo = c.saldo!=null ? c.saldo : c.total;
+  openModal(modalHead('Registrar pago', 'Compra '+c.numero+' · '+(c.proveedorNombre||'')) + `
+    <div class="dl">
+      <div class="r"><span>Total de la compra</span><b>${usd(c.total)}</b></div>
+      <div class="r"><span><b>Saldo por pagar</b></span><b>${usd(saldo)}</b></div>
+    </div>
+    <label class="f">Método de pago *</label>
+    <select class="f" id="pcMetodo" onchange="$('pcMoneda').value = METODOS_BS.includes($('pcMetodo').value)?'Bs':'USD'; pagoCompraPreview()">
+      ${METODOS.filter(m=>m!=='Retención de IVA').map(m=>`<option>${m}</option>`).join('')}
+    </select>
+    <label class="f">Moneda del monto pagado</label>
+    <select class="f" id="pcMoneda" onchange="pagoCompraPreview()">
+      <option value="USD">Dólares (USD)</option>
+      <option value="Bs">Bolívares (Bs)</option>
+    </select>
+    <label class="f">Monto pagado *</label>
+    <input class="f" id="pcMonto" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" oninput="pagoCompraPreview()">
+    <label class="f">Tasa Bs/USD (para convertir)</label>
+    <input class="f" id="pcTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${S.config.tasa||''}" oninput="pagoCompraPreview()">
+    <label class="f">Referencia / № de operación</label>
+    <input class="f" id="pcRef" placeholder="Opcional">
+    <label class="f">Comprobante del pago (foto o PDF) *</label>
+    <input class="f" id="pcComp" type="file" accept="image/*,application/pdf">
+    <div class="dl" id="pcPreview"></div>
+    <div class="actions">
+      <button class="btn primary block" id="btnPagoCompra" onclick="savePagoCompra('${cid}')">Guardar pago</button>
+    </div>`);
+}
+function pagoCompraPreview(){
+  const box = $('pcPreview'); if(!box) return;
+  const monto = num($('pcMonto').value);
+  const moneda = $('pcMoneda').value;
+  const tasa = num($('pcTasa').value) || S.config.tasa || 0;
+  if(monto<=0){ box.innerHTML=''; return; }
+  const usdVal = moneda==='Bs' ? (tasa>0 ? monto/tasa : 0) : monto;
+  box.innerHTML = `<div class="r"><span>Equivale a</span><b>${usd(usdVal)}${moneda==='Bs'&&tasa<=0?' — falta la tasa':''}</b></div>`;
+}
+async function savePagoCompra(cid){
+  const monto = num($('pcMonto').value);
+  if(monto<=0) return toast('Indica el monto pagado', true);
+  const moneda = $('pcMoneda').value;
+  const tasa = num($('pcTasa').value) || S.config.tasa || 0;
+  if(moneda==='Bs' && tasa<=0) return toast('Indica la tasa Bs/USD', true);
+  const montoUsd = r2(moneda==='Bs' ? monto/tasa : monto);
+  const fcomp = $('pcComp')?.files[0];
+  if(!fcomp && !confirm('No adjuntaste el comprobante del pago.\n\n¿Registrarlo SIN ese respaldo?')) return;
+  const btn = $('btnPagoCompra');
+  btn.disabled = true; btn.textContent = fcomp ? 'Subiendo comprobante…' : 'Guardando…';
+  let comp = null;
+  try{
+    if(fcomp){ comp = await subirArchivo(fcomp, 'compras/pago-'+Date.now()); btn.textContent='Guardando…'; }
+    const pago = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+      numero: await nextNumber('pp'),
+      fecha: firebase.firestore.Timestamp.now(),
+      metodo: $('pcMetodo').value, moneda,
+      monto: r2(monto), tasa: r2(tasa), montoUsd,
+      montoBs: r2(moneda==='Bs' ? monto : (tasa? monto*tasa : 0)),
+      comp, ref: $('pcRef').value.trim()
+    };
+    const ref = db.collection('compras').doc(cid);
+    await db.runTransaction(async t=>{
+      const d = await t.get(ref);
+      if(!d.exists) throw new Error('Compra no encontrada');
+      const c = d.data();
+      if(c.estado==='anulada') throw new Error('La compra está anulada');
+      const pagos = [...(c.pagos||[]), pago];
+      const abonado = r2(pagos.reduce((s,p)=> s+(p.montoUsd||0), 0));
+      const saldo = Math.max(r2(c.total - abonado), 0);
+      const estadoPago = saldo<=0.009 ? 'pagada' : (abonado>0 ? 'abonada' : 'pendiente');
+      t.update(ref, {pagos, abonado, saldo, estadoPago,
+        actualizado: firebase.firestore.FieldValue.serverTimestamp()});
+    });
+    closeModal(); toast('Pago '+pago.numero+' registrado');
+    setTimeout(()=> openCompra(cid), 200);
+  }catch(e){
+    console.error('savePagoCompra', e); toast(e.message||'No se pudo registrar el pago', true);
+    btn.disabled = false; btn.textContent = 'Guardar pago';
+  }
+}
+function openPagoCompra(cid, pid){
+  const c = S.compras.find(x=>x.id===cid); if(!c) return;
+  const p = (c.pagos||[]).find(x=>x.id===pid); if(!p) return;
+  openModal(modalHead('Pago '+(p.numero||''), 'Compra '+c.numero+' · '+(c.proveedorNombre||'')) + `
+    <div class="dl">
+      <div class="r"><span>Fecha</span><b>${fdate(p.fecha)}</b></div>
+      <div class="r"><span>Método</span><b>${esc(p.metodo)}</b></div>
+      <div class="r"><span>Pagado</span><b>${p.moneda==='Bs'?bs(p.monto):usd(p.monto)}</b></div>
+      ${p.moneda==='Bs'?`<div class="r"><span>Tasa</span><b>${money(p.tasa)}</b></div>`:''}
+      <div class="r"><span><b>Equivalente USD</b></span><b>${usd(p.montoUsd)}</b></div>
+      ${p.ref?`<div class="r"><span>Referencia</span><b>${esc(p.ref)}</b></div>`:''}
+    </div>
+    ${p.comp?`<button class="btn ghost block" style="margin-top:8px" onclick="verArchivo('${p.comp.fid||''}','${p.comp.url||''}')">Ver comprobante 📎</button>`:''}
+    <div class="doc-actions">
+      <button class="btn ghost" onclick="openCompra('${cid}')">Volver a la compra</button>
+      <button class="btn danger" onclick="delPagoCompra('${cid}','${pid}')">Eliminar pago</button>
+    </div>`);
+}
+async function delPagoCompra(cid, pid){
+  if(!confirm('¿Eliminar este pago? El saldo de la compra se recalculará.')) return;
+  const cLocal = S.compras.find(x=>x.id===cid);
+  const pagoLocal = cLocal ? (cLocal.pagos||[]).find(p=>p.id===pid) : null;
+  const ref = db.collection('compras').doc(cid);
+  try{
+    await db.runTransaction(async t=>{
+      const d = await t.get(ref);
+      if(!d.exists) throw new Error('Compra no encontrada');
+      const c = d.data();
+      const pagos = (c.pagos||[]).filter(p=>p.id!==pid);
+      const abonado = r2(pagos.reduce((s,p)=> s+(p.montoUsd||0), 0));
+      const saldo = Math.max(r2(c.total - abonado), 0);
+      const estadoPago = saldo<=0.009 ? 'pagada' : (abonado>0 ? 'abonada' : 'pendiente');
+      t.update(ref, {pagos, abonado, saldo, estadoPago,
+        actualizado: firebase.firestore.FieldValue.serverTimestamp()});
+    });
+    toast('Pago eliminado');
+    if(pagoLocal?.comp?.fid) borrarArchivo(pagoLocal.comp.fid);
+    setTimeout(()=> openCompra(cid), 200);
+  }catch(e){ console.error('delPagoCompra', e); toast('No se pudo eliminar el pago', true); }
+}
+
 /* ===================== GASTOS ===================== */
 const CATEGORIAS_GASTO = ['Compra de mercancía','Alquiler','Servicios (luz, agua, internet)','Sueldos y pagos a personal','Transporte y envíos','Impuestos y tasas','Mantenimiento','Otros'];
 
@@ -2009,16 +2282,68 @@ async function delGasto(id){
   closeModal(); toast('Gasto eliminado');
 }
 
+function compraRow(c){
+  const saldo = c.saldo!=null ? c.saldo : c.total;
+  const badge = c.estado==='anulada' ? 'anulada' : (c.estadoPago||'pendiente');
+  const btxt = c.estado==='anulada' ? 'anulada' : ({pendiente:'por pagar', abonada:'abonada', pagada:'pagada'}[c.estadoPago]||'por pagar');
+  return `<div class="item-row" onclick="openCompra('${c.id}')">
+    <span class="docnum com">${esc(c.numero)}</span>
+    <div class="info"><b>${esc(c.proveedorNombre||'—')}</b>
+      <small>${fdate(c.fecha)} · <span class="badge ${badge}">${btxt}</span></small></div>
+    <div class="right"><b>${usd(c.total)}</b><small>${saldo>0.009?'debe '+usd(saldo):'pagada'}</small></div>
+  </div>`;
+}
+
 function renderGastos(){
   const box = $('listGastos'); if(!box) return;
   const q = ($('qGastos')?.value||'').toLowerCase();
-  // Total del mes en curso
-  const mesAct = hoyISO().slice(0,7); // 'YYYY-MM'
-  const totalMes = S.gastos
-    .filter(g=> (g.fechaISO||'').startsWith(mesAct))
-    .reduce((s,g)=> s + (g.montoUsd||0), 0);
+  const sub = S.sub.gastos || 'gastos';
   const chip = $('gastosResumen');
-  if(chip) chip.textContent = totalMes>0 ? 'Este mes: '+usd(totalMes) : '';
+
+  // Por pagar total (compras activas con saldo)
+  const comprasVivas = S.compras.filter(c=>c.estado!=='anulada');
+  const porPagar = comprasVivas.reduce((s,c)=> s + (c.saldo!=null?c.saldo:c.total), 0);
+
+  if(sub==='compras' || sub==='porpagar'){
+    if(chip) chip.textContent = porPagar>0.009 ? 'Por pagar: '+usd(porPagar) : (S.compras.length?'todo pagado':'');
+  } else {
+    const mesAct = hoyISO().slice(0,7);
+    const totalMes = S.gastos.filter(g=> (g.fechaISO||'').startsWith(mesAct))
+      .reduce((s,g)=> s + (g.montoUsd||0), 0);
+    if(chip) chip.textContent = totalMes>0 ? 'Este mes: '+usd(totalMes) : '';
+  }
+
+  if(sub==='compras'){
+    const l = S.compras.filter(c=> !q || [c.numero,c.proveedorNombre,c.desc].join(' ').toLowerCase().includes(q)).sort(byDate);
+    box.innerHTML = l.length ? l.map(compraRow).join('')
+      : `<div class="empty">No hay compras${q?' que coincidan':' registradas'}. Registra la primera con el botón de arriba.</div>`;
+    return;
+  }
+
+  if(sub==='porpagar'){
+    const deudas = comprasVivas.filter(c=> (c.saldo!=null?c.saldo:c.total) > 0.009
+      && (!q || [c.numero,c.proveedorNombre,c.desc].join(' ').toLowerCase().includes(q)));
+    if(!deudas.length){
+      box.innerHTML = `<div class="empty">${q?'Nada coincide con la búsqueda.':'¡No debes nada a proveedores! 🎉'}</div>`;
+      return;
+    }
+    const grupos = {};
+    deudas.forEach(c=>{
+      const k = c.proveedorId || c.proveedorNombre || '?';
+      (grupos[k] = grupos[k] || {nombre: c.proveedorNombre||'—', compras: [], total: 0});
+      grupos[k].compras.push(c);
+      grupos[k].total += (c.saldo!=null?c.saldo:c.total);
+    });
+    box.innerHTML = Object.values(grupos)
+      .sort((a,b)=> b.total - a.total)
+      .map(g=>`
+        <div class="section-title" style="margin-top:14px">
+          <h2 style="font-size:14.5px">${esc(g.nombre)}</h2>
+          <small style="color:var(--warn)">le debes ${usd(g.total)}</small>
+        </div>
+        ${g.compras.sort(byDate).map(compraRow).join('')}`).join('');
+    return;
+  }
 
   const l = S.gastos
     .filter(g=> !q || [g.desc,g.categoria,g.metodo].join(' ').toLowerCase().includes(q))
@@ -2181,6 +2506,9 @@ function renderCaja(box){
     if(tsDia(p.fecha)===cajaDia) movs.push({t:'abono', v, p});
   }));
   S.gastos.forEach(g=>{ if((g.fechaISO||'')===cajaDia) movs.push({t:'gasto', g}); });
+  S.compras.filter(c=>c.estado!=='anulada').forEach(c=> (c.pagos||[]).forEach(p=>{
+    if(tsDia(p.fecha)===cajaDia) movs.push({t:'pagocompra', c, p});
+  }));
 
   // Entradas por método (las retenciones van aparte: no son efectivo)
   const porMetodo = {};
@@ -2194,10 +2522,11 @@ function renderCaja(box){
     if(p.moneda==='Bs') porMetodo[k].bs += (p.monto||0);
     porMetodo[k].n++;
   });
-  const salidas = movs.filter(m=>m.t==='gasto').reduce((s,{g})=> s+(g.montoUsd||0), 0);
+  const salidas = movs.filter(m=>m.t==='gasto').reduce((s,{g})=> s+(g.montoUsd||0), 0)
+                + movs.filter(m=>m.t==='pagocompra').reduce((s,{p})=> s+(p.montoUsd||0), 0);
   const neto = entradas - salidas;
   const esHoy = cajaDia === hoyISO();
-  const hora = m => m.t==='abono' ? (m.p.fecha?.toDate?.()?.getTime()||0) : (m.g.fecha?.toDate?.()?.getTime()||0);
+  const hora = m => m.t==='gasto' ? (m.g.fecha?.toDate?.()?.getTime()||0) : (m.p.fecha?.toDate?.()?.getTime()||0);
 
   box.innerHTML = `
     <div class="section-title" style="margin-top:4px">
@@ -2231,6 +2560,15 @@ function renderCaja(box){
           <div class="info"><b>${esc(m.v.contactoNombre||'—')}</b>
             <small>${fhora(m.p.fecha)} · ${esc(m.p.metodo)} · venta ${esc(m.v.numero)}</small></div>
           <div class="right"><b style="color:${esRet?'var(--brand)':'var(--ok)'}">+${usd(m.p.montoUsd)}</b>
+            ${m.p.moneda==='Bs'?`<small>${bs(m.p.monto)}</small>`:''}</div>
+        </div>`;
+      }
+      if(m.t==='pagocompra'){
+        return `<div class="item-row" onclick="openPagoCompra('${m.c.id}','${m.p.id}')">
+          <div class="avatar" style="background:var(--bad-soft); color:var(--bad)">−</div>
+          <div class="info"><b>${esc(m.c.proveedorNombre||'—')}</b>
+            <small>${fhora(m.p.fecha)} · ${esc(m.p.metodo)} · compra ${esc(m.c.numero)}</small></div>
+          <div class="right"><b style="color:var(--bad)">−${usd(m.p.montoUsd)}</b>
             ${m.p.moneda==='Bs'?`<small>${bs(m.p.monto)}</small>`:''}</div>
         </div>`;
       }
@@ -2327,7 +2665,7 @@ function exportarRespaldo(){
     config: S.config,
     clientes: S.clientes, proveedores: S.proveedores, productos: S.productos,
     solicitudes: S.solicitudes, cotizaciones: S.cotizaciones, notas: S.notas,
-    ventas: S.ventas, gastos: S.gastos
+    ventas: S.ventas, gastos: S.gastos, compras: S.compras
   };
   // Las fechas de Firestore se convierten a texto legible
   const json = JSON.stringify(data, function(key){
@@ -2390,11 +2728,19 @@ function renderReporte(){
     ? nPagos+' abono'+(nPagos!==1?'s':'') + (retenido>0.009 ? ' · +'+usd(retenido)+' en retenciones IVA' : '')
     : 'sin cobros';
 
-  // Gastado: gastos del mes
+  // Gastado: gastos del mes + pagos a proveedores del mes
   const gastosMes = S.gastos.filter(g=> (g.fechaISO||'').startsWith(repMes));
-  const gastado = gastosMes.reduce((s,g)=> s+(g.montoUsd||0), 0);
+  const gastadoOp = gastosMes.reduce((s,g)=> s+(g.montoUsd||0), 0);
+  let pagadoProv = 0;
+  S.compras.filter(c=>c.estado!=='anulada').forEach(c=> (c.pagos||[]).forEach(p=>{
+    if(tsMes(p.fecha)===repMes) pagadoProv += (p.montoUsd||0);
+  }));
+  const gastado = gastadoOp + pagadoProv;
   $('repGastado').textContent = usd(gastado);
-  $('repGastadoSub').textContent = gastosMes.length ? gastosMes.length+' gasto'+(gastosMes.length!==1?'s':'') : 'sin gastos';
+  $('repGastadoSub').textContent = (gastosMes.length || pagadoProv>0.009)
+    ? (gastosMes.length ? gastosMes.length+' gasto'+(gastosMes.length!==1?'s':'') : 'sin gastos')
+      + (pagadoProv>0.009 ? ' · '+usd(pagadoProv)+' a proveedores' : '')
+    : 'sin gastos';
 
   // Caja del mes: lo que entró menos lo que salió
   const caja = cobrado - gastado;
