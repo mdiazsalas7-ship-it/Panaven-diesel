@@ -1566,12 +1566,14 @@ function borrarArchivo(fid){
 
 /* ===================== ABONOS / PAGOS ===================== */
 const r2 = n => Math.round((Number(n)||0)*100)/100;
-const METODOS = ['Efectivo USD','Efectivo Bs','Pago móvil','Transferencia','Zelle','Punto de venta'];
+const METODOS = ['Efectivo USD','Efectivo Bs','Pago móvil','Transferencia','Zelle','Punto de venta','Retención de IVA'];
 // Métodos que normalmente entran en bolívares (preseleccionan la moneda Bs)
-const METODOS_BS = ['Efectivo Bs','Pago móvil','Transferencia','Punto de venta'];
+const METODOS_BS = ['Efectivo Bs','Pago móvil','Transferencia','Punto de venta','Retención de IVA'];
+let abonoVentaId = null; // venta activa en el formulario de abono
 
 function abonoForm(vid){
   const v = S.ventas.find(x=>x.id===vid); if(!v) return;
+  abonoVentaId = vid;
   const saldo = v.saldo!=null ? v.saldo : v.total;
   openModal(modalHead('Registrar abono', 'Venta '+v.numero+' · '+(v.contactoNombre||'')) + `
     <div class="dl">
@@ -1582,6 +1584,10 @@ function abonoForm(vid){
     <select class="f" id="aMetodo" onchange="abonoMetodoChange()">
       ${METODOS.map(m=>`<option>${m}</option>`).join('')}
     </select>
+    <p id="aRetHint" style="display:none; color:var(--muted); font-size:12px; margin:4px 0 0">
+      Precargué el <b>75% del IVA</b> de esta venta convertido a Bs (la retención típica de contribuyentes especiales).
+      Si el comprobante de retención dice otro monto, corrígelo, y adjunta ese comprobante como respaldo.
+    </p>
     <label class="f">Moneda del monto recibido</label>
     <select class="f" id="aMoneda" onchange="abonoPreview()">
       <option value="USD">Dólares (USD)</option>
@@ -1607,6 +1613,17 @@ function abonoForm(vid){
 function abonoMetodoChange(){
   const m = $('aMetodo').value;
   $('aMoneda').value = METODOS_BS.includes(m) ? 'Bs' : 'USD';
+  const hint = $('aRetHint');
+  if(m === 'Retención de IVA'){
+    const v = S.ventas.find(x=>x.id===abonoVentaId);
+    const tasa = num($('aTasa').value) || S.config.tasa || 0;
+    if(v && v.iva > 0 && tasa > 0){
+      $('aMonto').value = r2(v.iva * 0.75 * tasa);   // 75% del IVA en bolívares
+    }
+    if(hint) hint.style.display = 'block';
+  } else {
+    if(hint) hint.style.display = 'none';
+  }
   abonoPreview();
 }
 function abonoPreview(){
@@ -2201,13 +2218,20 @@ function renderReporte(){
   $('repVendido').textContent = usd(vendido);
   $('repVendidoSub').textContent = ventasMes.length ? ventasMes.length+' venta'+(ventasMes.length!==1?'s':'') : 'sin ventas';
 
-  // Cobrado: abonos que ENTRARON en el mes (aunque la venta sea de otro mes)
-  let cobrado = 0, nPagos = 0;
+  // Cobrado: abonos que ENTRARON en el mes (aunque la venta sea de otro mes).
+  // Las retenciones de IVA se cuentan aparte: son crédito fiscal, no plata en el banco.
+  let cobrado = 0, nPagos = 0, retenido = 0;
   activas.forEach(v=> (v.pagos||[]).forEach(p=>{
-    if(tsMes(p.fecha)===repMes){ cobrado += (p.montoUsd||0); nPagos++; }
+    if(tsMes(p.fecha)===repMes){
+      if(p.metodo === 'Retención de IVA'){ retenido += (p.montoUsd||0); }
+      else { cobrado += (p.montoUsd||0); }
+      nPagos++;
+    }
   }));
   $('repCobrado').textContent = usd(cobrado);
-  $('repCobradoSub').textContent = nPagos ? nPagos+' abono'+(nPagos!==1?'s':'') : 'sin cobros';
+  $('repCobradoSub').textContent = nPagos
+    ? nPagos+' abono'+(nPagos!==1?'s':'') + (retenido>0.009 ? ' · +'+usd(retenido)+' en retenciones IVA' : '')
+    : 'sin cobros';
 
   // Gastado: gastos del mes
   const gastosMes = S.gastos.filter(g=> (g.fechaISO||'').startsWith(repMes));
