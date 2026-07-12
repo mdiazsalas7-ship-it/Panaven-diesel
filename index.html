@@ -2243,6 +2243,34 @@ function renderCaja(box){
     }).join('') : `<div class="empty">Sin movimientos este día.</div>`}`;
 }
 
+/* ===================== ESTADO DE CUENTA (WhatsApp) ===================== */
+function waEstadoCuenta(clave){
+  // clave = contactoId (o nombre si la venta no tenía id)
+  const deudas = S.ventas.filter(v=> v.estado!=='anulada'
+    && (v.saldo!=null?v.saldo:v.total) > 0.009
+    && (v.contactoId===clave || v.contactoNombre===clave));
+  if(!deudas.length) return toast('Este cliente no tiene saldos pendientes', true);
+  const cli = S.clientes.find(x=>x.id===clave) || S.clientes.find(x=>x.nombre===deudas[0].contactoNombre);
+  const emp = S.config.empresa;
+  const tasa = S.config.tasa || 0;
+  const nombre = deudas[0].contactoNombre || cli?.nombre || '';
+  let total = 0;
+  let txt = `*${emp.nombre||'Panaven'}* — Estado de cuenta\n`;
+  txt += `Cliente: ${nombre}\nFecha: ${fdate(new Date())}\n\n`;
+  deudas.sort(byDate).reverse().forEach(v=>{
+    const saldo = v.saldo!=null ? v.saldo : v.total;
+    total += saldo;
+    txt += `• ${v.numero} (${fdate(v.fecha)}): total ${usd(v.total)}`;
+    if((v.abonado||0) > 0.009) txt += ` — abonado ${usd(v.abonado)}`;
+    txt += ` — saldo *${usd(saldo)}*\n`;
+  });
+  txt += `\n*TOTAL PENDIENTE: ${usd(total)}*`;
+  if(tasa) txt += `\nEquivalente hoy: ${bs(total*tasa)} (tasa ${money(tasa)})`;
+  txt += `\n\nAgradecemos su pago. Cualquier duda o para coordinar, estamos a la orden.`;
+  if(!cli?.tel) toast('El cliente no tiene teléfono guardado: WhatsApp se abrirá sin destinatario');
+  waSend(cli?.tel, txt);
+}
+
 function renderVentas(){
   const q = ($('qVentas')?.value||'').toLowerCase();
   const box = $('listVentas'); if(!box) return;
@@ -2270,7 +2298,7 @@ function renderVentas(){
     const grupos = {};
     deudas.forEach(v=>{
       const k = v.contactoId || v.contactoNombre || '?';
-      (grupos[k] = grupos[k] || {nombre: v.contactoNombre||'—', ventas: [], total: 0});
+      (grupos[k] = grupos[k] || {clave: k, nombre: v.contactoNombre||'—', ventas: [], total: 0});
       grupos[k].ventas.push(v);
       grupos[k].total += (v.saldo!=null?v.saldo:v.total);
     });
@@ -2281,6 +2309,8 @@ function renderVentas(){
           <h2 style="font-size:14.5px">${esc(g.nombre)}</h2>
           <small style="color:var(--warn)">debe ${usd(g.total)}</small>
         </div>
+        <button class="btn ok block" style="margin:0 0 8px; font-size:13px"
+          onclick="waEstadoCuenta('${esc(g.clave)}')">Enviar estado de cuenta por WhatsApp</button>
         ${g.ventas.sort(byDate).map(v=>docRow(v,'vta')).join('')}`).join('');
     return;
   }
