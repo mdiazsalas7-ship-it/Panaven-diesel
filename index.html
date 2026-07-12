@@ -401,9 +401,10 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
       <div class="stat" onclick="go('gastos')"><small>Gastado</small><b id="repGastado">$ 0,00</b><span class="sub" id="repGastadoSub">—</span></div>
       <div class="stat"><small>Caja del mes</small><b id="repCaja">$ 0,00</b><span class="sub">cobrado − gastado</span></div>
     </div>
-    <div class="stat-grid" style="grid-template-columns:1fr">
+    <div class="stat-grid" style="grid-template-columns:1fr 1fr">
+      <div class="stat"><small>Ganancia del mes</small><b id="repGanancia">$ 0,00</b><span class="sub" id="repGananciaSub">—</span></div>
       <div class="stat" onclick="go('ventas');setSubTab('ventas','porcobrar')" style="cursor:pointer">
-        <small>Por cobrar (total acumulado)</small><b id="repPorCobrar">$ 0,00</b><span class="sub" id="repPorCobrarSub">—</span>
+        <small>Por cobrar (acumulado)</small><b id="repPorCobrar">$ 0,00</b><span class="sub" id="repPorCobrarSub">—</span>
       </div>
     </div>
     <div class="grid2" style="gap:10px; align-items:start">
@@ -952,7 +953,11 @@ function productoForm(p){
     </div>
     <div class="grid2">
       <div><label class="f">Precio de venta (USD)</label><input class="f" id="pPrecio" type="number" step="0.01" inputmode="decimal" value="${p?.precio ?? ''}" placeholder="0.00"></div>
+      <div><label class="f">Costo (USD)</label><input class="f" id="pCosto" type="number" step="0.01" inputmode="decimal" value="${p?.costo ?? ''}" placeholder="lo que te cuesta"></div>
+    </div>
+    <div class="grid2">
       <div><label class="f">Existencia (stock)</label><input class="f" id="pStock" type="number" step="any" inputmode="decimal" value="${p?.stock ?? ''}" placeholder="0"></div>
+      <div><span style="display:block; padding:26px 2px 0; color:var(--muted); font-size:12px">${(p?.costo!=null&&p?.precio)?('Margen: '+usd((p.precio||0)-(p.costo||0))+' por unidad'):'El costo se actualiza solo al recibir compras'}</span></div>
     </div>
     <label class="f">Notas</label>
     <textarea class="f" id="pNotas" placeholder="Proveedor habitual, costo, equivalencias…">${esc(p?.notas||'')}</textarea>
@@ -968,6 +973,7 @@ async function saveProducto(id){
     nombre: $('pNombre').value.trim(), codigo: $('pCodigo').value.trim(),
     unidad: $('pUnidad').value.trim() || 'und',
     precio: num($('pPrecio').value),
+    costo: $('pCosto').value === '' ? null : num($('pCosto').value),
     stock: $('pStock').value === '' ? null : num($('pStock').value),
     notas: $('pNotas').value.trim(),
     actualizado: firebase.firestore.FieldValue.serverTimestamp()
@@ -1440,7 +1446,11 @@ async function confirmarVenta(cotId){
     const venta = {
       numero: ventaNum,
       contactoId: c.contactoId, contactoNombre: c.contactoNombre || '',
-      items: c.items.map(i=>({...i})),
+      items: c.items.map(i=>{
+        // Congela el costo del producto en este momento (para calcular la ganancia real)
+        const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === (i.desc||'').trim().toLowerCase());
+        return {...i, costo: (p && p.costo!=null) ? p.costo : null};
+      }),
       conIva: conIva, ivaPct: t.ivaPct,
       tipoVenta: conIva ? 'fiscal' : 'nota',   // las dos vertientes
       subtotal: t.subtotal, iva: t.iva, total: t.total,
@@ -2861,6 +2871,29 @@ function renderReporte(){
   $('repPorCobrar').textContent = usd(porCobrar);
   $('repPorCobrarSub').textContent = deudores ? deudores+' cliente'+(deudores!==1?'s':'')+' con saldo — toca para ver' : 'todo cobrado';
 
+  // Ganancia del mes: (precio − costo) por artículo vendido.
+  // Usa el costo congelado en la venta; si no existe (ventas viejas), el costo actual del producto.
+  const costoDe = i => {
+    if(i.costo != null) return i.costo;
+    const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === (i.desc||'').trim().toLowerCase());
+    return (p && p.costo!=null) ? p.costo : null;
+  };
+  let ganancia = 0, baseConCosto = 0, baseSinCosto = 0;
+  ventasMes.forEach(v=> (v.items||[]).forEach(i=>{
+    const cant = num(i.cant)||0, precio = num(i.precio)||0, costo = costoDe(i);
+    if(costo != null){ ganancia += (precio-costo)*cant; baseConCosto += precio*cant; }
+    else { baseSinCosto += precio*cant; }
+  }));
+  const gEl = $('repGanancia');
+  if(gEl){
+    gEl.textContent = usd(r2(ganancia));
+    gEl.style.color = ganancia > 0.009 ? 'var(--ok)' : (ganancia < -0.009 ? 'var(--bad)' : '');
+    $('repGananciaSub').textContent = (baseConCosto+baseSinCosto) <= 0.009 ? 'sin ventas'
+      : baseSinCosto > 0.009
+        ? 'falta el costo en '+usd(r2(baseSinCosto))+' vendidos'
+        : 'margen sobre lo vendido (sin IVA)';
+  }
+
   // Top clientes del mes (por monto vendido)
   const porCliente = {};
   ventasMes.forEach(v=>{
@@ -2872,17 +2905,20 @@ function renderReporte(){
     ? topC.map(([n,t])=>`<div class="rep-row"><span>${esc(n)}</span><b>${usd(t)}</b></div>`).join('')
     : '<div class="rep-row"><span>Sin ventas este mes</span></div>';
 
-  // Top productos del mes (por monto)
+  // Top productos del mes (por monto, con su ganancia si el costo se conoce)
   const porProd = {};
   ventasMes.forEach(v=> (v.items||[]).forEach(i=>{
     const k = i.desc||'—';
-    (porProd[k] = porProd[k]||{cant:0, monto:0});
-    porProd[k].cant += num(i.cant)||0;
-    porProd[k].monto += (num(i.cant)||0)*(num(i.precio)||0);
+    (porProd[k] = porProd[k]||{cant:0, monto:0, gan:0, conCosto:true});
+    const cant = num(i.cant)||0, precio = num(i.precio)||0, costo = costoDe(i);
+    porProd[k].cant += cant;
+    porProd[k].monto += cant*precio;
+    if(costo!=null) porProd[k].gan += (precio-costo)*cant; else porProd[k].conCosto = false;
   }));
   const topP = Object.entries(porProd).sort((a,b)=>b[1].monto-a[1].monto).slice(0,5);
   $('repTopProductos').innerHTML = topP.length
-    ? topP.map(([n,d])=>`<div class="rep-row"><span>${esc(n)} × ${money(d.cant)}</span><b>${usd(d.monto)}</b></div>`).join('')
+    ? topP.map(([n,d])=>`<div class="rep-row"><span>${esc(n)} × ${money(d.cant)}</span>
+        <b>${usd(d.monto)}${d.conCosto?` <small style="color:var(--ok); font-weight:700">+${usd(r2(d.gan))}</small>`:''}</b></div>`).join('')
     : '<div class="rep-row"><span>Sin ventas este mes</span></div>';
 }
 
