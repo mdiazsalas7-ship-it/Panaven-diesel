@@ -487,6 +487,7 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
       <button data-sub="ventas" class="active" onclick="setSubTab('ventas','ventas')">Ventas</button>
       <button data-sub="porcobrar" onclick="setSubTab('ventas','porcobrar')">Por cobrar</button>
       <button data-sub="caja" onclick="setSubTab('ventas','caja')">Caja</button>
+      <button data-sub="cuentas" onclick="setSubTab('ventas','cuentas')">Cuentas</button>
     </div>
     <div class="search">
       <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -628,7 +629,7 @@ const LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA+gAAACyCAMAAADmgBXa
 /* ===================== ESTADO ===================== */
 const S = {
   clientes: [], proveedores: [], productos: [],
-  solicitudes: [], cotizaciones: [], notas: [], ventas: [], gastos: [], compras: [], usuarios: [], empleados: [],
+  solicitudes: [], cotizaciones: [], notas: [], ventas: [], gastos: [], compras: [], usuarios: [], empleados: [], cuentas: [],
   config: { tasa: 0, empresa: {nombre:'Panaven', rif:'', tel:'', dir:''}, iva: 16 },
   view: 'inicio',
   sub: { contactos:'clientes', cotizar:'cotizaciones', ventas:'ventas', gastos:'gastos' },
@@ -724,8 +725,10 @@ function applyRol(){
   ['inicio','contactos','productos','cotizar','ventas','gastos','ajustes'].forEach(v=>{
     const b = $('nav-'+v); if(b) b.style.display = puedeVer(v) ? '' : 'none';
   });
-  const cajaBtn = document.querySelector('#tabs-ventas button[data-sub="caja"]');
-  if(cajaBtn) cajaBtn.style.display = puede('finanzas') ? '' : 'none';
+  ['caja','cuentas'].forEach(t=>{
+    const b = document.querySelector(`#tabs-ventas button[data-sub="${t}"]`);
+    if(b) b.style.display = puede('finanzas') ? '' : 'none';
+  });
   ['cardTasa','cardEmpresa','cardRespaldo','cardUsuarios'].forEach(id=>{
     const el = $(id); if(el) el.style.display = puede('admin') ? '' : 'none';
   });
@@ -744,6 +747,7 @@ function startApp(){
   listen('cotizaciones','cotizaciones');
   listen('notas','notas');
   listen('ventas','ventas');
+  listen('cuentas','cuentas');
   if(puede('finanzas')){
     listen('gastos','gastos');
     listen('compras','compras');
@@ -1721,6 +1725,7 @@ function abonoForm(vid){
       Precargué el <b>75% del IVA</b> de esta venta convertido a Bs (la retención típica de contribuyentes especiales).
       Si el comprobante de retención dice otro monto, corrígelo, y adjunta ese comprobante como respaldo.
     </p>
+    <span id="aCuentaWrap">${selectCuentaHTML('aCuenta', 'USD')}</span>
     <label class="f">Moneda del monto recibido</label>
     <select class="f" id="aMoneda" onchange="abonoPreview()">
       <option value="USD">Dólares (USD)</option>
@@ -1746,6 +1751,9 @@ function abonoForm(vid){
 function abonoMetodoChange(){
   const m = $('aMetodo').value;
   $('aMoneda').value = METODOS_BS.includes(m) ? 'Bs' : 'USD';
+  sugerirCuenta('aCuenta', $('aMoneda').value);
+  const wrap = $('aCuentaWrap');
+  if(wrap) wrap.style.display = (m==='Retención de IVA') ? 'none' : ''; // la retención no toca ninguna cuenta
   const hint = $('aRetHint');
   if(m === 'Retención de IVA'){
     const v = S.ventas.find(x=>x.id===abonoVentaId);
@@ -1807,6 +1815,7 @@ async function saveAbono(vid){
     moneda, monto: r2(monto), tasa: moneda==='Bs'||tasa? r2(tasa):0,
     montoUsd, montoBs,
     comp: comp,   // comprobante del pago {url, tipo, nombre, ruta} o null
+    ...( $('aMetodo').value==='Retención de IVA' ? {cuentaId:null, cuentaNombre:null} : cuentaDe('aCuenta') ),
     por: quien(),
     ref: $('aRef').value.trim(), notas: $('aNotas').value.trim()
   };
@@ -2285,6 +2294,7 @@ function pagoCompraForm(cid){
     <input class="f" id="pcMonto" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" oninput="pagoCompraPreview()">
     <label class="f">Tasa Bs/USD (para convertir)</label>
     <input class="f" id="pcTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${S.config.tasa||''}" oninput="pagoCompraPreview()">
+    ${selectCuentaHTML('pcCuenta', 'Bs')}
     <label class="f">Referencia / № de operación</label>
     <input class="f" id="pcRef" placeholder="Opcional">
     <label class="f">Comprobante del pago (foto o PDF) *</label>
@@ -2324,7 +2334,8 @@ async function savePagoCompra(cid){
       metodo: $('pcMetodo').value, moneda,
       monto: r2(monto), tasa: r2(tasa), montoUsd,
       montoBs: r2(moneda==='Bs' ? monto : (tasa? monto*tasa : 0)),
-      comp, ref: $('pcRef').value.trim()
+      comp, ref: $('pcRef').value.trim(),
+      ...cuentaDe('pcCuenta'), por: quien()
     };
     const ref = db.collection('compras').doc(cid);
     await db.runTransaction(async t=>{
@@ -2495,6 +2506,7 @@ function pagarNominaForm(id){
     :'<input type="hidden" id="nDescuento" value="0">'}
     <label class="f">Método de pago</label>
     <select class="f" id="nMetodo">${METODOS.filter(m=>m!=='Retención de IVA').map(m=>`<option>${m}</option>`).join('')}</select>
+    ${selectCuentaHTML('nCuenta', 'USD')}
     <div class="actions">
       <button class="btn primary block" id="btnNomina" onclick="pagarNomina('${id}')">Registrar pago de nómina</button>
     </div>`);
@@ -2519,7 +2531,7 @@ async function pagarNomina(id){
       desc: 'Nómina — '+e.nombre+(periodo?' ('+periodo+')':'')+(desc>0.009?' · desc. adelanto '+usd(desc):''),
       tipoPago: 'nomina', empleadoId: id, empleadoNombre: e.nombre,
       moneda: 'USD', monto: neto, tasa: r2(S.config.tasa||0), montoUsd: neto,
-      metodo: $('nMetodo').value, por: quien(),
+      metodo: $('nMetodo').value, ...cuentaDe('nCuenta'), por: quien(),
       fechaISO: hoyISO(), fecha: firebase.firestore.Timestamp.fromDate(new Date(y, m-1, d, 12)),
       creado: now, actualizado: now
     });
@@ -2541,6 +2553,7 @@ function adelantoForm(id){
     <input class="f" id="aMontoAdel" type="number" step="0.01" inputmode="decimal" placeholder="0.00">
     <label class="f">Método de pago</label>
     <select class="f" id="aMetodoAdel">${METODOS.filter(m=>m!=='Retención de IVA').map(m=>`<option>${m}</option>`).join('')}</select>
+    ${selectCuentaHTML('aCuentaAdel', 'USD')}
     <label class="f">Nota</label>
     <input class="f" id="aNotaAdel" placeholder="Opcional">
     <div class="actions">
@@ -2563,7 +2576,7 @@ async function darAdelanto(id){
       desc: 'Adelanto — '+e.nombre+(nota?' ('+nota+')':''),
       tipoPago: 'adelanto', empleadoId: id, empleadoNombre: e.nombre,
       moneda: 'USD', monto: r2(monto), tasa: r2(S.config.tasa||0), montoUsd: r2(monto),
-      metodo: $('aMetodoAdel').value, por: quien(),
+      metodo: $('aMetodoAdel').value, ...cuentaDe('aCuentaAdel'), por: quien(),
       fechaISO: hoyISO(), fecha: firebase.firestore.Timestamp.fromDate(new Date(y, m-1, d, 12)),
       creado: now, actualizado: now
     });
@@ -2609,10 +2622,12 @@ function gastoForm(g){
     <select class="f" id="gMetodo">
       ${METODOS.map(m=>`<option ${g&&g.metodo===m?'selected':''}>${m}</option>`).join('')}
     </select>
+    ${selectCuentaHTML('gCuenta', g?.moneda==='Bs'?'Bs':'USD')}
     <div class="dl" id="gPreview"></div>
     <div class="actions">
       <button class="btn primary block" onclick="saveGasto('${g?g.id:''}')">${g?'Guardar cambios':'Registrar gasto'}</button>
     </div>`);
+  if(g?.cuentaId && $('gCuenta')) $('gCuenta').value = g.cuentaId;
   gastoPreview();
 }
 function gastoPreview(){
@@ -2642,6 +2657,7 @@ async function saveGasto(id){
     moneda, monto: r2(monto), tasa: r2(tasa),
     montoUsd: r2(moneda==='Bs' ? monto/tasa : monto),
     metodo: $('gMetodo').value,
+    ...cuentaDe('gCuenta'),
     actualizado: firebase.firestore.FieldValue.serverTimestamp()
   };
   try{
@@ -2992,6 +3008,169 @@ function renderCaja(box){
     }).join('') : `<div class="empty">Sin movimientos este día.</div>`}`;
 }
 
+/* ===================== CUENTAS Y BANCOS =====================
+   El saldo NUNCA se guarda: se calcula siempre como
+   saldo inicial + abonos que entraron − gastos y pagos que salieron.
+   Una sola fuente de verdad: imposible que se desincronice. */
+
+// Convierte un movimiento (abono/gasto/pago) a la moneda de la cuenta
+function montoEnMoneda(p, monedaCuenta){
+  if(monedaCuenta==='Bs'){
+    if(p.moneda==='Bs') return num(p.monto);
+    return p.montoBs!=null ? num(p.montoBs) : num(p.montoUsd)*(num(p.tasa)||0);
+  }
+  return p.montoUsd!=null ? num(p.montoUsd)
+    : (p.moneda==='Bs' && num(p.tasa)>0 ? num(p.monto)/num(p.tasa) : num(p.monto));
+}
+
+// Todos los movimientos de una cuenta, derivados de ventas, gastos y compras
+function movimientosDeCuenta(id){
+  const movs = [];
+  S.ventas.filter(v=>v.estado!=='anulada').forEach(v=> (v.pagos||[]).forEach(p=>{
+    if(p.cuentaId===id && p.metodo!=='Retención de IVA')
+      movs.push({fecha:p.fecha, desc:'Abono '+(p.numero||'')+' · '+(v.contactoNombre||''), signo:+1, p,
+        abrir:`openPago('${v.id}','${p.id}')`});
+  }));
+  S.gastos.forEach(g=>{
+    if(g.cuentaId===id)
+      movs.push({fecha:g.fecha, desc:g.desc||g.categoria||'Gasto', signo:-1, p:g,
+        abrir:`openGasto('${g.id}')`});
+  });
+  S.compras.filter(c=>c.estado!=='anulada').forEach(c=> (c.pagos||[]).forEach(p=>{
+    if(p.cuentaId===id)
+      movs.push({fecha:p.fecha, desc:'Pago '+(p.numero||'')+' · '+(c.proveedorNombre||''), signo:-1, p,
+        abrir:`openPagoCompra('${c.id}','${p.id}')`});
+  }));
+  return movs.sort((a,b)=> (b.fecha?.toDate?.()?.getTime()||0) - (a.fecha?.toDate?.()?.getTime()||0));
+}
+
+function saldoDeCuenta(c){
+  const movs = movimientosDeCuenta(c.id);
+  return r2(movs.reduce((s,m)=> s + m.signo*montoEnMoneda(m.p, c.moneda), num(c.saldoInicial)||0));
+}
+
+// ¿Cuántos movimientos de plata siguen sin cuenta asignada? (registros de antes de este módulo)
+function movsSinCuenta(){
+  let n = 0;
+  S.ventas.filter(v=>v.estado!=='anulada').forEach(v=> (v.pagos||[]).forEach(p=>{
+    if(!p.cuentaId && p.metodo!=='Retención de IVA') n++;
+  }));
+  S.gastos.forEach(g=>{ if(!g.cuentaId) n++; });
+  S.compras.filter(c=>c.estado!=='anulada').forEach(c=> (c.pagos||[]).forEach(p=>{ if(!p.cuentaId) n++; }));
+  return n;
+}
+
+// Selector de cuenta para los formularios: sugiere la primera cuenta de la moneda del pago
+function selectCuentaHTML(idSel, monedaSugerida){
+  const activas = S.cuentas.filter(c=>c.activo!==false);
+  if(!activas.length) return `<input type="hidden" id="${idSel}" value="">`;
+  const sug = activas.find(c=>c.moneda===monedaSugerida) || activas[0];
+  return `<label class="f">Cuenta (a dónde entra / de dónde sale)</label>
+    <select class="f" id="${idSel}">
+      ${activas.map(c=>`<option value="${c.id}" ${c.id===sug.id?'selected':''}>${esc(c.nombre)} (${c.moneda})</option>`).join('')}
+      <option value="">— sin cuenta —</option>
+    </select>`;
+}
+function cuentaDe(idSel){
+  const el = $(idSel);
+  const c = el ? S.cuentas.find(x=>x.id===el.value) : null;
+  return c ? {cuentaId:c.id, cuentaNombre:c.nombre} : {cuentaId:null, cuentaNombre:null};
+}
+function sugerirCuenta(idSel, moneda){
+  const el = $(idSel); if(!el || el.tagName!=='SELECT') return;
+  const sug = S.cuentas.find(c=>c.activo!==false && c.moneda===moneda);
+  if(sug) el.value = sug.id;
+}
+
+function cuentaForm(c){
+  openModal(modalHead(c ? 'Editar cuenta' : 'Nueva cuenta', 'Un bolsillo de Panaven: caja, banco, Zelle…') + `
+    <label class="f">Nombre *</label>
+    <input class="f" id="ctaNombre" value="${esc(c?.nombre||'')}" placeholder="Ej. Cuenta BNC / Efectivo caja / Zelle">
+    <label class="f">Moneda</label>
+    <select class="f" id="ctaMoneda" ${c?'disabled':''}>
+      <option value="USD" ${c?.moneda!=='Bs'?'selected':''}>Dólares (USD)</option>
+      <option value="Bs" ${c?.moneda==='Bs'?'selected':''}>Bolívares (Bs)</option>
+    </select>
+    <label class="f">Saldo inicial (lo que hay HOY, antes de empezar a registrar aquí)</label>
+    <input class="f" id="ctaInicial" type="number" step="0.01" inputmode="decimal" value="${c?.saldoInicial ?? 0}">
+    <div class="actions">
+      <button class="btn primary block" onclick="saveCuenta('${c?c.id:''}')">${c?'Guardar cambios':'Crear cuenta'}</button>
+    </div>`);
+}
+async function saveCuenta(id){
+  const nombre = $('ctaNombre').value.trim();
+  if(!nombre) return toast('Ponle nombre a la cuenta', true);
+  const data = {nombre, saldoInicial: r2(num($('ctaInicial').value)),
+    actualizado: firebase.firestore.FieldValue.serverTimestamp()};
+  if(!id) data.moneda = $('ctaMoneda').value;
+  try{
+    if(id) await db.collection('cuentas').doc(id).update(data);
+    else { data.activo=true; data.creado=firebase.firestore.FieldValue.serverTimestamp();
+           await db.collection('cuentas').add(data); }
+    closeModal(); toast(id?'Cuenta actualizada':'Cuenta creada');
+  }catch(e){ console.error('saveCuenta',e); toast('No se pudo guardar la cuenta', true); }
+}
+
+function openCuenta(id){
+  const c = S.cuentas.find(x=>x.id===id); if(!c) return;
+  const movs = movimientosDeCuenta(id);
+  const fm = n => c.moneda==='Bs' ? bs(n) : usd(n);
+  const entradas = r2(movs.filter(m=>m.signo>0).reduce((s,m)=>s+montoEnMoneda(m.p,c.moneda),0));
+  const salidas  = r2(movs.filter(m=>m.signo<0).reduce((s,m)=>s+montoEnMoneda(m.p,c.moneda),0));
+  openModal(modalHead(c.nombre, 'Cuenta en '+c.moneda+(c.activo===false?' · INACTIVA':'')) + `
+    <div class="dl">
+      <div class="r"><span>Saldo inicial</span><b>${fm(num(c.saldoInicial)||0)}</b></div>
+      <div class="r"><span>Entradas (${movs.filter(m=>m.signo>0).length})</span><b style="color:var(--ok)">+${fm(entradas)}</b></div>
+      <div class="r"><span>Salidas (${movs.filter(m=>m.signo<0).length})</span><b style="color:var(--bad)">−${fm(salidas)}</b></div>
+      <div class="r"><span><b>SALDO ACTUAL</b></span><b>${fm(saldoDeCuenta(c))}</b></div>
+    </div>
+    ${movs.length?`
+    <label class="f">Movimientos recientes (toca uno para verlo)</label>
+    <div class="dl">
+      ${movs.slice(0,15).map(m=>`<div class="r" style="cursor:pointer" onclick="${m.abrir}">
+        <span>${fdate(m.fecha)} · ${esc(m.desc)}</span>
+        <b style="color:${m.signo>0?'var(--ok)':'var(--bad)'}">${m.signo>0?'+':'−'}${fm(montoEnMoneda(m.p,c.moneda))}</b></div>`).join('')}
+    </div>`:'<p style="color:var(--muted); font-size:13px">Sin movimientos todavía: aparecerán al registrar abonos, gastos o pagos con esta cuenta.</p>'}
+    <div class="doc-actions">
+      <button class="btn ghost" onclick="cuentaForm(S.cuentas.find(x=>x.id==='${id}'))">Editar</button>
+      <button class="btn ghost" onclick="toggleCuenta('${id}')">${c.activo===false?'Reactivar':'Desactivar'}</button>
+    </div>`);
+}
+async function toggleCuenta(id){
+  const c = S.cuentas.find(x=>x.id===id); if(!c) return;
+  await db.collection('cuentas').doc(id).update({activo: c.activo===false,
+    actualizado: firebase.firestore.FieldValue.serverTimestamp()});
+  toast(c.activo===false?'Cuenta reactivada':'Cuenta desactivada (su historial se conserva)');
+  setTimeout(()=> openCuenta(id), 200);
+}
+
+function renderCuentas(box){
+  const activas = S.cuentas.filter(c=>c.activo!==false);
+  // Total general en USD (las cuentas en Bs se convierten a la tasa de hoy)
+  const tasa = num(S.config.tasa)||0;
+  let total = 0;
+  activas.forEach(c=>{
+    const s = saldoDeCuenta(c);
+    total += c.moneda==='Bs' ? (tasa>0 ? s/tasa : 0) : s;
+  });
+  const chip = $('ventasResumen');
+  if(chip && activas.length) chip.textContent = 'Total en cuentas: '+usd(r2(total))+(tasa?' (Bs a tasa '+money(tasa)+')':'');
+  const sinCta = movsSinCuenta();
+  box.innerHTML = `
+    ${puede('admin')?`<button class="btn primary block" style="margin-bottom:10px" onclick="cuentaForm()">+ Agregar cuenta</button>`:''}
+    ${activas.length ? activas.map(c=>{
+      const s = saldoDeCuenta(c);
+      const nm = movimientosDeCuenta(c.id).length;
+      return `<div class="item-row" onclick="openCuenta('${c.id}')">
+        <div class="avatar" style="background:var(--brand-soft); color:var(--brand)">${esc((c.nombre||'?').charAt(0))}</div>
+        <div class="info"><b>${esc(c.nombre)}</b><small>${c.moneda} · ${nm} movimiento${nm!==1?'s':''}</small></div>
+        <div class="right"><b style="color:${s<-0.009?'var(--bad)':'inherit'}">${c.moneda==='Bs'?bs(s):usd(s)}</b></div>
+      </div>`;
+    }).join('') : `<div class="empty">Crea tus cuentas (caja de efectivo, banco, Zelle…) y cada cobro o pago indicará por dónde se movió la plata.</div>`}
+    ${sinCta?`<p style="text-align:center; color:var(--muted); font-size:12px; margin-top:12px">
+      ${sinCta} movimiento${sinCta!==1?'s':''} anterior${sinCta!==1?'es':''} sin cuenta asignada (de antes de este módulo): no afectan ningún saldo.</p>`:''}`;
+}
+
 /* ===================== ESTADO DE CUENTA (WhatsApp) ===================== */
 function waEstadoCuenta(clave){
   // clave = contactoId (o nombre si la venta no tenía id)
@@ -3032,11 +3211,15 @@ function renderVentas(){
 
   // El buscador no aplica en el corte de caja
   const sw = $('qVentas');
-  if(sw && sw.parentElement) sw.parentElement.style.display = (S.sub.ventas==='caja') ? 'none' : '';
+  if(sw && sw.parentElement) sw.parentElement.style.display = (S.sub.ventas==='caja'||S.sub.ventas==='cuentas') ? 'none' : '';
 
   if(S.sub.ventas==='caja'){
     if(!puede('finanzas')){ S.sub.ventas='ventas'; }
     else { renderCaja(box); return; }
+  }
+  if(S.sub.ventas==='cuentas'){
+    if(!puede('finanzas')){ S.sub.ventas='ventas'; }
+    else { renderCuentas(box); return; }
   }
 
   if(S.sub.ventas==='porcobrar'){
@@ -3079,7 +3262,7 @@ function exportarRespaldo(){
     config: S.config,
     clientes: S.clientes, proveedores: S.proveedores, productos: S.productos,
     solicitudes: S.solicitudes, cotizaciones: S.cotizaciones, notas: S.notas,
-    ventas: S.ventas, gastos: S.gastos, compras: S.compras, empleados: S.empleados
+    ventas: S.ventas, gastos: S.gastos, compras: S.compras, empleados: S.empleados, cuentas: S.cuentas
   };
   // Las fechas de Firestore se convierten a texto legible
   const json = JSON.stringify(data, function(key){
@@ -3119,7 +3302,7 @@ async function cambiarRol(uid, rol){
 }
 
 /* ===================== RESTAURAR RESPALDO ===================== */
-const COLS_RESPALDO = ['clientes','proveedores','productos','solicitudes','cotizaciones','notas','ventas','gastos','compras','empleados'];
+const COLS_RESPALDO = ['clientes','proveedores','productos','solicitudes','cotizaciones','notas','ventas','gastos','compras','empleados','cuentas'];
 
 function restaurarRespaldo(){
   const inp = document.createElement('input');
