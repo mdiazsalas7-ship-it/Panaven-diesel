@@ -418,6 +418,9 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
         <small>Por cobrar (acumulado)</small><b id="repPorCobrar">$ 0,00</b><span class="sub" id="repPorCobrarSub">—</span>
       </div>
     </div>
+    <button class="btn ghost block" style="margin:2px 0 12px" onclick="exportarMesExcel()">
+      Descargar paquete del contador (Excel del mes) 📊
+    </button>
     <div class="grid2" style="gap:10px; align-items:start">
       <div class="card" style="margin:0">
         <h3 style="font-size:13.5px; margin-bottom:8px">Mejores clientes del mes</h3>
@@ -3301,6 +3304,146 @@ async function cambiarRol(uid, rol){
   }catch(e){ console.error('cambiarRol', e); toast('No se pudo cambiar el rol', true); }
 }
 
+/* ===================== PAQUETE DEL CONTADOR (Excel del mes) ===================== */
+// La librería de Excel se carga solo cuando se necesita (no engorda el arranque)
+let _xlsxCargando = null;
+function cargarXLSX(){
+  if(window.XLSX) return Promise.resolve();
+  if(_xlsxCargando) return _xlsxCargando;
+  _xlsxCargando = new Promise((res, rej)=>{
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    sc.onload = res;
+    sc.onerror = ()=>{ _xlsxCargando=null; rej(new Error('No se pudo cargar el generador de Excel. Revisa tu internet e intenta de nuevo.')); };
+    document.head.appendChild(sc);
+  });
+  return _xlsxCargando;
+}
+
+async function exportarMesExcel(){
+  try{
+    toast('Preparando el paquete del contador…');
+    await cargarXLSX();
+    const mes = repMes;
+    const enMes = t => tsMes(t)===mes;
+    const F = t => fdate(t);
+    const activas = S.ventas.filter(v=>v.estado!=='anulada');
+    const estadoTxt = v => v.estado==='anulada'?'ANULADA':({pendiente:'Por cobrar',abonada:'Abonada',pagada:'Pagada'}[v.estadoPago]||'Por cobrar');
+
+    // --- Hoja Ventas: las registradas en el mes ---
+    const ventasMes = S.ventas.filter(v=> enMes(v.fecha));
+    const hVentas = ventasMes.sort(byDate).map(v=>({
+      'Número': v.numero, 'Fecha': F(v.fecha), 'Cliente': v.contactoNombre||'',
+      'Tipo': v.conIva===false?'Sin IVA (nota de entrega)':'Con IVA',
+      'Subtotal USD': r2(v.subtotal||0), 'IVA USD': r2(v.iva||0), 'Total USD': r2(v.total||0),
+      'Abonado USD': r2(v.abonado||0), 'Saldo USD': r2(v.saldo!=null?v.saldo:v.total),
+      'Estado': estadoTxt(v), 'Cotización': v.cotizacionNum||'', 'Nota entrega': v.notaNum||'',
+      'Registrada por': v.por||''
+    }));
+
+    // --- Hoja Abonos: los cobros que ENTRARON en el mes ---
+    const hAbonos = [];
+    activas.forEach(v=> (v.pagos||[]).forEach(p=>{
+      if(!enMes(p.fecha)) return;
+      hAbonos.push({
+        'Recibo': p.numero||'', 'Fecha': F(p.fecha), 'Venta': v.numero, 'Cliente': v.contactoNombre||'',
+        'Método': p.metodo||'', 'Moneda': p.moneda||'USD', 'Monto original': r2(p.monto||0),
+        'Tasa': r2(p.tasa||0), 'Monto USD': r2(p.montoUsd||0),
+        'Cuenta': p.cuentaNombre||'', 'Referencia': p.ref||'', 'Registrado por': p.por||''
+      });
+    }));
+    hAbonos.sort((a,b)=> a.Fecha.localeCompare(b.Fecha));
+
+    // --- Hoja Gastos: todos los del mes (incluye nómina y adelantos, que SON gastos) ---
+    const gastosMes = S.gastos.filter(g=> (g.fechaISO||'').startsWith(mes));
+    const hGastos = gastosMes.sort(byDate).map(g=>({
+      'Fecha': F(g.fecha), 'Categoría': g.categoria||'', 'Descripción': g.desc||'',
+      'Método': g.metodo||'', 'Cuenta': g.cuentaNombre||'', 'Moneda': g.moneda||'USD',
+      'Monto original': r2(g.monto||0), 'Tasa': r2(g.tasa||0), 'Monto USD': r2(g.montoUsd||0),
+      'Registrado por': g.por||''
+    }));
+
+    // --- Hoja Compras: deudas generadas en el mes ---
+    const comprasMes = S.compras.filter(c=> enMes(c.fecha));
+    const hCompras = comprasMes.sort(byDate).map(c=>({
+      'Número': c.numero, 'Fecha': F(c.fecha), 'Proveedor': c.proveedorNombre||'',
+      'Descripción': c.desc||'', 'Total USD': r2(c.total||0), 'Pagado USD': r2(c.abonado||0),
+      'Saldo USD': r2(c.saldo!=null?c.saldo:c.total),
+      'Estado': c.estado==='anulada'?'ANULADA':({pendiente:'Por pagar',abonada:'Abonada',pagada:'Pagada'}[c.estadoPago]||'Por pagar'),
+      'Mercancía': c.recibida?'Recibida':'Por recibir'
+    }));
+
+    // --- Hoja Pagos a proveedores: los que SALIERON en el mes ---
+    const hPagosProv = [];
+    S.compras.filter(c=>c.estado!=='anulada').forEach(c=> (c.pagos||[]).forEach(p=>{
+      if(!enMes(p.fecha)) return;
+      hPagosProv.push({
+        'Pago': p.numero||'', 'Fecha': F(p.fecha), 'Compra': c.numero, 'Proveedor': c.proveedorNombre||'',
+        'Método': p.metodo||'', 'Moneda': p.moneda||'USD', 'Monto original': r2(p.monto||0),
+        'Tasa': r2(p.tasa||0), 'Monto USD': r2(p.montoUsd||0),
+        'Cuenta': p.cuentaNombre||'', 'Referencia': p.ref||''
+      });
+    }));
+    hPagosProv.sort((a,b)=> a.Fecha.localeCompare(b.Fecha));
+
+    // --- Hoja Nómina: pagos al personal del mes ---
+    const hNomina = gastosMes.filter(g=>g.empleadoId).sort(byDate).map(g=>({
+      'Fecha': F(g.fecha), 'Empleado': g.empleadoNombre||'',
+      'Tipo': g.tipoPago==='adelanto'?'Adelanto':'Nómina', 'Detalle': g.desc||'',
+      'Monto USD': r2(g.montoUsd||0), 'Método': g.metodo||'', 'Cuenta': g.cuentaNombre||'',
+      'Registrado por': g.por||''
+    }));
+
+    // --- Hoja Resumen ---
+    let cobrado=0, retenido=0;
+    hAbonos.forEach(a=>{ if(a['Método']==='Retención de IVA') retenido+=a['Monto USD']; else cobrado+=a['Monto USD']; });
+    const vendido = ventasMes.filter(v=>v.estado!=='anulada').reduce((s,v)=>s+(v.total||0),0);
+    const ivaVentas = ventasMes.filter(v=>v.estado!=='anulada').reduce((s,v)=>s+(v.iva||0),0);
+    const gastado = gastosMes.reduce((s,g)=>s+(g.montoUsd||0),0);
+    const pagadoProv = hPagosProv.reduce((s,p)=>s+p['Monto USD'],0);
+    const nominaMes = hNomina.reduce((s,g)=>s+g['Monto USD'],0);
+    let ganancia=0; ventasMes.filter(v=>v.estado!=='anulada').forEach(v=>(v.items||[]).forEach(i=>{
+      const c=costoDeItem(i); if(c!=null) ganancia += ((num(i.precio)||0)-c)*(num(i.cant)||0);
+    }));
+    const porCobrar = activas.reduce((s,v)=>s+(v.saldo!=null?v.saldo:v.total),0);
+    const porPagar = S.compras.filter(c=>c.estado!=='anulada').reduce((s,c)=>s+(c.saldo!=null?c.saldo:c.total),0);
+    const hResumen = [
+      {'Concepto':'Mes', 'Valor USD': mesLabel(mes)},
+      {'Concepto':'Vendido (ventas del mes)', 'Valor USD': r2(vendido)},
+      {'Concepto':'IVA facturado en ventas', 'Valor USD': r2(ivaVentas)},
+      {'Concepto':'Cobrado en efectivo/banco', 'Valor USD': r2(cobrado)},
+      {'Concepto':'Retenciones de IVA recibidas', 'Valor USD': r2(retenido)},
+      {'Concepto':'Gastado (todos los gastos)', 'Valor USD': r2(gastado)},
+      {'Concepto':'   de eso, nómina y adelantos', 'Valor USD': r2(nominaMes)},
+      {'Concepto':'Pagado a proveedores', 'Valor USD': r2(pagadoProv)},
+      {'Concepto':'Caja del mes (cobrado − gastado − proveedores)', 'Valor USD': r2(cobrado - gastado - pagadoProv)},
+      {'Concepto':'Ganancia estimada (precio − costo, sin IVA)', 'Valor USD': r2(ganancia)},
+      {'Concepto':'Por cobrar acumulado (clientes)', 'Valor USD': r2(porCobrar)},
+      {'Concepto':'Por pagar acumulado (proveedores)', 'Valor USD': r2(porPagar)},
+      {'Concepto':'Generado', 'Valor USD': new Date().toLocaleString('es-VE')},
+    ];
+
+    const wb = XLSX.utils.book_new();
+    const add = (nombre, filas, anchos)=>{
+      const ws = XLSX.utils.json_to_sheet(filas.length ? filas : [{'Aviso':'Sin registros este mes'}]);
+      if(anchos) ws['!cols'] = anchos.map(w=>({wch:w}));
+      XLSX.utils.book_append_sheet(wb, ws, nombre);
+    };
+    add('Resumen', hResumen, [42,18]);
+    add('Ventas', hVentas, [10,11,28,24,12,10,11,12,11,11,10,12,22]);
+    add('Abonos', hAbonos, [10,11,10,28,16,8,14,9,11,18,14,22]);
+    add('Gastos', hGastos, [11,26,34,14,18,8,14,9,11,22]);
+    add('Compras', hCompras, [8,11,26,34,11,12,11,10,12]);
+    add('Pagos a proveedores', hPagosProv, [9,11,8,26,14,8,14,9,11,18,14]);
+    add('Nómina', hNomina, [11,24,10,36,11,14,18,22]);
+    XLSX.writeFile(wb, 'panaven-'+mes+'.xlsx');
+    toast('Paquete del contador descargado: panaven-'+mes+'.xlsx');
+  }catch(e){
+    console.error('exportarMesExcel', e);
+    toast(e.message||'No se pudo generar el Excel', true);
+  }
+}
+
 /* ===================== RESTAURAR RESPALDO ===================== */
 const COLS_RESPALDO = ['clientes','proveedores','productos','solicitudes','cotizaciones','notas','ventas','gastos','compras','empleados','cuentas'];
 
@@ -3406,6 +3549,13 @@ async function ejecutarRestauracion(){
   }
 }
 
+// Costo de un artículo vendido: el congelado en la venta o, si falta, el costo actual del producto
+function costoDeItem(i){
+  if(i.costo != null) return i.costo;
+  const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === (i.desc||'').trim().toLowerCase());
+  return (p && p.costo!=null) ? p.costo : null;
+}
+
 /* ===================== REPORTE DEL MES ===================== */
 let repMes = hoyISO().slice(0,7); // 'YYYY-MM' del mes que se está viendo
 
@@ -3485,15 +3635,9 @@ function renderReporte(){
   $('repPorCobrarSub').textContent = deudores ? deudores+' cliente'+(deudores!==1?'s':'')+' con saldo — toca para ver' : 'todo cobrado';
 
   // Ganancia del mes: (precio − costo) por artículo vendido.
-  // Usa el costo congelado en la venta; si no existe (ventas viejas), el costo actual del producto.
-  const costoDe = i => {
-    if(i.costo != null) return i.costo;
-    const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === (i.desc||'').trim().toLowerCase());
-    return (p && p.costo!=null) ? p.costo : null;
-  };
   let ganancia = 0, baseConCosto = 0, baseSinCosto = 0;
   ventasMes.forEach(v=> (v.items||[]).forEach(i=>{
-    const cant = num(i.cant)||0, precio = num(i.precio)||0, costo = costoDe(i);
+    const cant = num(i.cant)||0, precio = num(i.precio)||0, costo = costoDeItem(i);
     if(costo != null){ ganancia += (precio-costo)*cant; baseConCosto += precio*cant; }
     else { baseSinCosto += precio*cant; }
   }));
@@ -3523,7 +3667,7 @@ function renderReporte(){
   ventasMes.forEach(v=> (v.items||[]).forEach(i=>{
     const k = i.desc||'—';
     (porProd[k] = porProd[k]||{cant:0, monto:0, gan:0, conCosto:true});
-    const cant = num(i.cant)||0, precio = num(i.precio)||0, costo = costoDe(i);
+    const cant = num(i.cant)||0, precio = num(i.precio)||0, costo = costoDeItem(i);
     porProd[k].cant += cant;
     porProd[k].monto += cant*precio;
     if(costo!=null) porProd[k].gan += (precio-costo)*cant; else porProd[k].conCosto = false;
