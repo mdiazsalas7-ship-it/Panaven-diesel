@@ -505,6 +505,7 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
       <button data-sub="gastos" class="active" onclick="setSubTab('gastos','gastos')">Gastos</button>
       <button data-sub="compras" onclick="setSubTab('gastos','compras')">Compras</button>
       <button data-sub="porpagar" onclick="setSubTab('gastos','porpagar')">Por pagar</button>
+      <button data-sub="personal" onclick="setSubTab('gastos','personal')">Personal</button>
     </div>
     <div class="fab-row">
       <button class="btn primary block" id="btnNewGasto" onclick="newGastoFromTab()">+ Registrar gasto</button>
@@ -627,7 +628,7 @@ const LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA+gAAACyCAMAAADmgBXa
 /* ===================== ESTADO ===================== */
 const S = {
   clientes: [], proveedores: [], productos: [],
-  solicitudes: [], cotizaciones: [], notas: [], ventas: [], gastos: [], compras: [], usuarios: [],
+  solicitudes: [], cotizaciones: [], notas: [], ventas: [], gastos: [], compras: [], usuarios: [], empleados: [],
   config: { tasa: 0, empresa: {nombre:'Panaven', rif:'', tel:'', dir:''}, iva: 16 },
   view: 'inicio',
   sub: { contactos:'clientes', cotizar:'cotizaciones', ventas:'ventas', gastos:'gastos' },
@@ -689,14 +690,15 @@ function setSubTab(group, sub){
     const b = $('btnNewGasto');
     if(b){
       b.style.display = sub==='porpagar' ? 'none' : '';
-      b.textContent = sub==='gastos' ? '+ Registrar gasto' : '+ Registrar compra';
+      b.textContent = sub==='gastos' ? '+ Registrar gasto'
+        : sub==='compras' ? '+ Registrar compra' : '+ Registrar empleado';
     }
     renderGastos();
   } else {
     renderVentas();
   }
 }
-function newGastoFromTab(){ S.sub.gastos==='compras' ? compraForm() : gastoForm(); }
+function newGastoFromTab(){ const t=S.sub.gastos; t==='compras' ? compraForm() : t==='personal' ? empleadoForm() : gastoForm(); }
 function newDocFromTab(){
   const s = S.sub.cotizar;
   s==='cotizaciones' ? newCotizacion() : s==='solicitudes' ? newSolicitud() : newNota();
@@ -745,6 +747,7 @@ function startApp(){
   if(puede('finanzas')){
     listen('gastos','gastos');
     listen('compras','compras');
+    listen('empleados','empleados');
   }
   if(puede('admin')) listen('usuarios','usuarios');
 }
@@ -2384,6 +2387,197 @@ async function delPagoCompra(cid, pid){
   }catch(e){ console.error('delPagoCompra', e); toast('No se pudo eliminar el pago', true); }
 }
 
+/* ===================== PERSONAL (RRHH + nómina) =====================
+   Principio: cada pago de nómina o adelanto ES un gasto (categoría Sueldos)
+   con el empleado vinculado. Nada se escribe dos veces: el mismo registro
+   aparece en Gastos, en la Caja del día y en el Reporte del mes. */
+
+const FRECUENCIAS = {mensual:'Mensual', quincenal:'Quincenal', semanal:'Semanal'};
+const montoSugerido = e => {
+  const su = num(e.sueldo)||0;
+  return e.frecuencia==='quincenal' ? r2(su/2) : e.frecuencia==='semanal' ? r2(su*12/52) : r2(su);
+};
+
+function empleadoForm(e){
+  openModal(modalHead(e ? 'Editar empleado' : 'Registrar empleado', 'Su ficha y condiciones de pago.') + `
+    <label class="f">Nombre completo *</label>
+    <input class="f" id="eNombre" value="${esc(e?.nombre||'')}" placeholder="Nombre y apellido">
+    <div class="grid2">
+      <div><label class="f">Cédula</label><input class="f" id="eCedula" value="${esc(e?.cedula||'')}" placeholder="V-12345678"></div>
+      <div><label class="f">Teléfono</label><input class="f" id="eTel" value="${esc(e?.tel||'')}" placeholder="0414-0000000"></div>
+    </div>
+    <label class="f">Cargo</label>
+    <input class="f" id="eCargo" value="${esc(e?.cargo||'')}" placeholder="Ej. Vendedor de mostrador">
+    <div class="grid2">
+      <div><label class="f">Sueldo mensual (USD) *</label><input class="f" id="eSueldo" type="number" step="0.01" inputmode="decimal" value="${e?.sueldo ?? ''}" placeholder="0.00"></div>
+      <div><label class="f">Frecuencia de pago</label>
+        <select class="f" id="eFrec">
+          ${Object.entries(FRECUENCIAS).map(([k,v])=>`<option value="${k}" ${e?.frecuencia===k?'selected':''}>${v}</option>`).join('')}
+        </select></div>
+    </div>
+    <label class="f">Fecha de ingreso</label>
+    <input class="f" id="eIngreso" type="date" value="${e?.fechaIngreso||hoyISO()}">
+    <label class="f">Notas</label>
+    <input class="f" id="eNotas" value="${esc(e?.notas||'')}" placeholder="Opcional">
+    <div class="actions">
+      <button class="btn primary block" onclick="saveEmpleado('${e?e.id:''}')">${e?'Guardar cambios':'Registrar empleado'}</button>
+    </div>`);
+  setTimeout(()=> $('eNombre').focus(), 50);
+}
+async function saveEmpleado(id){
+  const nombre = $('eNombre').value.trim();
+  if(!nombre) return toast('El nombre es obligatorio', true);
+  const sueldo = num($('eSueldo').value);
+  if(sueldo<=0) return toast('Indica el sueldo mensual', true);
+  const data = {
+    nombre, cedula: $('eCedula').value.trim(), tel: $('eTel').value.trim(),
+    cargo: $('eCargo').value.trim(), sueldo: r2(sueldo),
+    frecuencia: $('eFrec').value, fechaIngreso: $('eIngreso').value || hoyISO(),
+    notas: $('eNotas').value.trim(),
+    actualizado: firebase.firestore.FieldValue.serverTimestamp()
+  };
+  if(id) await db.collection('empleados').doc(id).update(data);
+  else {
+    data.activo = true; data.adelantoSaldo = 0;
+    data.creado = firebase.firestore.FieldValue.serverTimestamp();
+    await db.collection('empleados').add(data);
+  }
+  closeModal(); toast(id?'Empleado actualizado':'Empleado registrado');
+}
+
+function openEmpleado(id){
+  const e = S.empleados.find(x=>x.id===id); if(!e) return;
+  const historial = S.gastos.filter(g=>g.empleadoId===id).sort(byDate).slice(0,8);
+  const adel = r2(e.adelantoSaldo||0);
+  openModal(modalHead(e.nombre, (e.cargo||'—')+(e.activo===false?' · INACTIVO':'')) + `
+    <div class="dl">
+      ${e.cedula?`<div class="r"><span>Cédula</span><b>${esc(e.cedula)}</b></div>`:''}
+      ${e.tel?`<div class="r"><span>Teléfono</span><b>${esc(e.tel)}</b></div>`:''}
+      <div class="r"><span>Sueldo</span><b>${usd(e.sueldo)} / mes · ${FRECUENCIAS[e.frecuencia]||'Mensual'}</b></div>
+      <div class="r"><span>Pago por período</span><b>${usd(montoSugerido(e))}</b></div>
+      ${e.fechaIngreso?`<div class="r"><span>Ingreso</span><b>${e.fechaIngreso.split('-').reverse().join('/')}</b></div>`:''}
+      <div class="r"><span><b>Adelantos pendientes</b></span><b style="color:${adel>0.009?'var(--warn)':'inherit'}">${usd(adel)}</b></div>
+    </div>
+    ${historial.length?`
+    <label class="f">Últimos pagos (toca uno para verlo)</label>
+    <div class="dl">
+      ${historial.map(g=>`<div class="r" style="cursor:pointer" onclick="openGasto('${g.id}')">
+        <span>${fdate(g.fecha)} · ${g.tipoPago==='adelanto'?'Adelanto':'Nómina'}</span>
+        <b>${usd(g.montoUsd)}</b></div>`).join('')}
+    </div>`:''}
+    <div class="doc-actions">
+      ${e.activo!==false?`<button class="btn primary" style="grid-column:1/-1" onclick="pagarNominaForm('${id}')">Pagar nómina</button>
+      <button class="btn ok" onclick="adelantoForm('${id}')">Dar adelanto</button>`:''}
+      <button class="btn ghost" onclick="empleadoForm(S.empleados.find(x=>x.id==='${id}'))">Editar</button>
+      <button class="btn ghost" style="grid-column:1/-1" onclick="toggleEmpleado('${id}')">${e.activo===false?'Reactivar empleado':'Marcar como inactivo'}</button>
+    </div>`);
+}
+async function toggleEmpleado(id){
+  const e = S.empleados.find(x=>x.id===id); if(!e) return;
+  await db.collection('empleados').doc(id).update({activo: e.activo===false,
+    actualizado: firebase.firestore.FieldValue.serverTimestamp()});
+  toast(e.activo===false?'Empleado reactivado':'Empleado marcado inactivo (su historial se conserva)');
+  setTimeout(()=> openEmpleado(id), 200);
+}
+
+function pagarNominaForm(id){
+  const e = S.empleados.find(x=>x.id===id); if(!e) return;
+  const adel = r2(e.adelantoSaldo||0);
+  openModal(modalHead('Pagar nómina', e.nombre+' · '+usd(e.sueldo)+'/mes ('+(FRECUENCIAS[e.frecuencia]||'Mensual')+')') + `
+    <label class="f">Período que pagas</label>
+    <input class="f" id="nPeriodo" placeholder="Ej. 1ra quincena de julio">
+    <label class="f">Monto a pagar (USD) *</label>
+    <input class="f" id="nMonto" type="number" step="0.01" inputmode="decimal" value="${montoSugerido(e)}">
+    ${adel>0.009?`
+    <label class="f">Descontar de adelantos (debe ${usd(adel)})</label>
+    <input class="f" id="nDescuento" type="number" step="0.01" inputmode="decimal" min="0" max="${adel}" placeholder="0.00">
+    <p style="color:var(--muted); font-size:12px; margin:4px 0 0">Lo que descuentes se resta del monto en efectivo y baja su deuda de adelantos.</p>`
+    :'<input type="hidden" id="nDescuento" value="0">'}
+    <label class="f">Método de pago</label>
+    <select class="f" id="nMetodo">${METODOS.filter(m=>m!=='Retención de IVA').map(m=>`<option>${m}</option>`).join('')}</select>
+    <div class="actions">
+      <button class="btn primary block" id="btnNomina" onclick="pagarNomina('${id}')">Registrar pago de nómina</button>
+    </div>`);
+}
+async function pagarNomina(id){
+  const e = S.empleados.find(x=>x.id===id); if(!e) return;
+  const monto = num($('nMonto').value);
+  const desc = Math.min(num($('nDescuento')?.value), r2(e.adelantoSaldo||0));
+  if(monto<=0) return toast('Indica el monto del período', true);
+  if(desc > monto + 0.009) return toast('El descuento no puede superar el monto del período', true);
+  const neto = r2(monto - desc);   // lo que sale de caja de verdad
+  const periodo = $('nPeriodo').value.trim();
+  if(!confirm(`Pagar a ${e.nombre}: ${usd(neto)} en efectivo/banco`+(desc>0.009?` (ya descontados ${usd(desc)} de adelantos)`:'')+`. ¿Confirmar?`)) return;
+  const btn = $('btnNomina'); btn.disabled = true; btn.textContent = 'Registrando…';
+  try{
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+    const [y,m,d] = hoyISO().split('-').map(Number);
+    const gref = db.collection('gastos').doc();
+    const batch = db.batch();
+    batch.set(gref, {
+      categoria: 'Sueldos y pagos a personal',
+      desc: 'Nómina — '+e.nombre+(periodo?' ('+periodo+')':'')+(desc>0.009?' · desc. adelanto '+usd(desc):''),
+      tipoPago: 'nomina', empleadoId: id, empleadoNombre: e.nombre,
+      moneda: 'USD', monto: neto, tasa: r2(S.config.tasa||0), montoUsd: neto,
+      metodo: $('nMetodo').value, por: quien(),
+      fechaISO: hoyISO(), fecha: firebase.firestore.Timestamp.fromDate(new Date(y, m-1, d, 12)),
+      creado: now, actualizado: now
+    });
+    if(desc>0.009) batch.update(db.collection('empleados').doc(id),
+      {adelantoSaldo: firebase.firestore.FieldValue.increment(-desc), actualizado: now});
+    await batch.commit();
+    closeModal(); toast('Nómina de '+e.nombre+' registrada: '+usd(neto));
+    setTimeout(()=> openEmpleado(id), 200);
+  }catch(err){
+    console.error('pagarNomina', err); toast('No se pudo registrar el pago', true);
+    btn.disabled = false; btn.textContent = 'Registrar pago de nómina';
+  }
+}
+
+function adelantoForm(id){
+  const e = S.empleados.find(x=>x.id===id); if(!e) return;
+  openModal(modalHead('Dar adelanto', e.nombre+' · debe actualmente '+usd(r2(e.adelantoSaldo||0))) + `
+    <label class="f">Monto del adelanto (USD) *</label>
+    <input class="f" id="aMontoAdel" type="number" step="0.01" inputmode="decimal" placeholder="0.00">
+    <label class="f">Método de pago</label>
+    <select class="f" id="aMetodoAdel">${METODOS.filter(m=>m!=='Retención de IVA').map(m=>`<option>${m}</option>`).join('')}</select>
+    <label class="f">Nota</label>
+    <input class="f" id="aNotaAdel" placeholder="Opcional">
+    <div class="actions">
+      <button class="btn primary block" id="btnAdel" onclick="darAdelanto('${id}')">Registrar adelanto</button>
+    </div>`);
+}
+async function darAdelanto(id){
+  const e = S.empleados.find(x=>x.id===id); if(!e) return;
+  const monto = num($('aMontoAdel').value);
+  if(monto<=0) return toast('Indica el monto del adelanto', true);
+  const btn = $('btnAdel'); btn.disabled = true; btn.textContent = 'Registrando…';
+  try{
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+    const [y,m,d] = hoyISO().split('-').map(Number);
+    const nota = $('aNotaAdel').value.trim();
+    const gref = db.collection('gastos').doc();
+    const batch = db.batch();
+    batch.set(gref, {
+      categoria: 'Sueldos y pagos a personal',
+      desc: 'Adelanto — '+e.nombre+(nota?' ('+nota+')':''),
+      tipoPago: 'adelanto', empleadoId: id, empleadoNombre: e.nombre,
+      moneda: 'USD', monto: r2(monto), tasa: r2(S.config.tasa||0), montoUsd: r2(monto),
+      metodo: $('aMetodoAdel').value, por: quien(),
+      fechaISO: hoyISO(), fecha: firebase.firestore.Timestamp.fromDate(new Date(y, m-1, d, 12)),
+      creado: now, actualizado: now
+    });
+    batch.update(db.collection('empleados').doc(id),
+      {adelantoSaldo: firebase.firestore.FieldValue.increment(r2(monto)), actualizado: now});
+    await batch.commit();
+    closeModal(); toast('Adelanto registrado: '+e.nombre+' debe '+usd(r2((e.adelantoSaldo||0)+monto)));
+    setTimeout(()=> openEmpleado(id), 200);
+  }catch(err){
+    console.error('darAdelanto', err); toast('No se pudo registrar el adelanto', true);
+    btn.disabled = false; btn.textContent = 'Registrar adelanto';
+  }
+}
+
 /* ===================== GASTOS ===================== */
 const CATEGORIAS_GASTO = ['Compra de mercancía','Alquiler','Servicios (luz, agua, internet)','Sueldos y pagos a personal','Transporte y envíos','Impuestos y tasas','Mantenimiento','Otros'];
 
@@ -2509,6 +2703,25 @@ function renderGastos(){
     const totalMes = S.gastos.filter(g=> (g.fechaISO||'').startsWith(mesAct))
       .reduce((s,g)=> s + (g.montoUsd||0), 0);
     if(chip) chip.textContent = totalMes>0 ? 'Este mes: '+usd(totalMes) : '';
+  }
+
+  if(sub==='personal'){
+    const activos = S.empleados.filter(e=>e.activo!==false);
+    const nomina = activos.reduce((s,e)=> s+(num(e.sueldo)||0), 0);
+    if(chip) chip.textContent = activos.length ? 'Nómina mensual: '+usd(r2(nomina)) : '';
+    const l = S.empleados
+      .filter(e=> !q || [e.nombre,e.cargo,e.cedula].join(' ').toLowerCase().includes(q))
+      .sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''));
+    box.innerHTML = l.length ? l.map(e=>`
+      <div class="item-row" onclick="openEmpleado('${e.id}')" style="${e.activo===false?'opacity:.55':''}">
+        <div class="avatar">${esc((e.nombre||'?').charAt(0))}</div>
+        <div class="info"><b>${esc(e.nombre)}</b>
+          <small>${esc(e.cargo||'—')} · ${FRECUENCIAS[e.frecuencia]||'Mensual'}${e.activo===false?' · inactivo':''}</small></div>
+        <div class="right"><b>${usd(e.sueldo)}</b>
+          ${(e.adelantoSaldo||0)>0.009?`<small style="color:var(--warn)">adelanto ${usd(r2(e.adelantoSaldo))}</small>`:''}</div>
+      </div>`).join('')
+      : `<div class="empty">No hay empleados${q?' que coincidan':' registrados'}. Registra el primero con el botón de arriba.</div>`;
+    return;
   }
 
   if(sub==='compras'){
@@ -2866,7 +3079,7 @@ function exportarRespaldo(){
     config: S.config,
     clientes: S.clientes, proveedores: S.proveedores, productos: S.productos,
     solicitudes: S.solicitudes, cotizaciones: S.cotizaciones, notas: S.notas,
-    ventas: S.ventas, gastos: S.gastos, compras: S.compras
+    ventas: S.ventas, gastos: S.gastos, compras: S.compras, empleados: S.empleados
   };
   // Las fechas de Firestore se convierten a texto legible
   const json = JSON.stringify(data, function(key){
@@ -2906,7 +3119,7 @@ async function cambiarRol(uid, rol){
 }
 
 /* ===================== RESTAURAR RESPALDO ===================== */
-const COLS_RESPALDO = ['clientes','proveedores','productos','solicitudes','cotizaciones','notas','ventas','gastos','compras'];
+const COLS_RESPALDO = ['clientes','proveedores','productos','solicitudes','cotizaciones','notas','ventas','gastos','compras','empleados'];
 
 function restaurarRespaldo(){
   const inp = document.createElement('input');
