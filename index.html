@@ -335,7 +335,17 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
 
 <!-- ============ INICIO DE SESIÓN ============ -->
 <div id="loginScreen">
-  <div class="login-card">
+  <div class="login-card" id="pendCard" style="display:none">
+    <p class="login-sub">Sistema Administrativo</p>
+    <h3 style="margin:6px 0 10px">Cuenta en espera de aprobación</h3>
+    <p style="color:var(--muted); font-size:13px; line-height:1.6; text-align:left">
+      Tu acceso <b id="pendEmail"></b> fue creado, pero un <b>administrador</b> debe asignarte un rol
+      (en Ajustes → Usuarios y roles) antes de que puedas entrar.
+    </p>
+    <button class="btn primary block" style="margin-top:14px" onclick="location.reload()">Ya me aprobaron, entrar</button>
+    <button class="btn ghost block" style="margin-top:8px" onclick="auth.signOut().then(()=>location.reload())">Cerrar sesión</button>
+  </div>
+  <div class="login-card" id="loginCard">
     <img id="loginLogo" alt="Panaven">
     <p class="login-sub">Sistema Administrativo</p>
     <label class="f">Correo</label>
@@ -386,7 +396,8 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
       <button class="btn ghost" onclick="newNota()">+ Nota de entrega</button>
     </div>
 
-    <!-- ===== Reporte del mes ===== -->
+    <!-- ===== Reporte del mes (solo administradores) ===== -->
+    <div id="repBloque">
     <div class="section-title" style="margin-top:18px">
       <h2>Reporte del mes</h2>
       <div class="mes-nav">
@@ -417,6 +428,7 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
         <div id="repTopProductos" style="font-size:13px"></div>
       </div>
     </div>
+    </div><!-- /repBloque -->
 
     <div class="section-title"><h2>Actividad reciente</h2></div>
     <div id="recentList"></div>
@@ -507,7 +519,7 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
   <!-- ============ AJUSTES ============ -->
   <section id="view-ajustes" style="display:none">
     <div class="section-title"><h2>Ajustes</h2></div>
-    <div class="card">
+    <div class="card" id="cardTasa">
       <h3 style="font-size:15px; margin-bottom:4px">Tasa del día</h3>
       <p style="color:var(--muted); font-size:13px; margin:0 0 10px">Se usa para mostrar los montos en bolívares.</p>
       <div class="grid2">
@@ -515,7 +527,7 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
         <button class="btn primary" onclick="saveTasa()">Guardar tasa</button>
       </div>
     </div>
-    <div class="card">
+    <div class="card" id="cardEmpresa">
       <h3 style="font-size:15px; margin-bottom:4px">Datos de la empresa</h3>
       <p style="color:var(--muted); font-size:13px; margin:0 0 4px">Aparecen en el encabezado de los documentos impresos.</p>
       <label class="f">Nombre / Razón social</label>
@@ -530,7 +542,7 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
       <input class="f" id="cfgIva" type="number" step="0.1" inputmode="decimal" placeholder="16">
       <div class="actions"><button class="btn primary block" onclick="saveEmpresa()">Guardar datos</button></div>
     </div>
-    <div class="card">
+    <div class="card" id="cardRespaldo">
       <h3 style="font-size:15px; margin-bottom:4px">Respaldo de datos</h3>
       <p style="color:var(--muted); font-size:13px; margin:0 0 10px">
         Descarga una copia de toda la información (clientes, productos, cotizaciones, ventas, abonos, gastos) en un archivo.
@@ -538,6 +550,14 @@ body.locked header.app, body.locked main, body.locked nav.bottom{display:none}
       </p>
       <button class="btn primary block" onclick="exportarRespaldo()">Descargar respaldo completo</button>
       <button class="btn ghost block" style="margin-top:8px" onclick="restaurarRespaldo()">Restaurar desde un respaldo…</button>
+    </div>
+    <div class="card" id="cardUsuarios">
+      <h3 style="font-size:15px; margin-bottom:4px">Usuarios y roles</h3>
+      <p style="color:var(--muted); font-size:13px; margin:0 0 10px">
+        Crea el acceso (correo y contraseña) en Firebase Authentication; la persona aparecerá aquí
+        al iniciar sesión por primera vez, y tú le asignas su rol.
+      </p>
+      <div id="listaUsuarios"></div>
     </div>
     <div class="card">
       <h3 style="font-size:15px; margin-bottom:4px">Sesión</h3>
@@ -607,7 +627,7 @@ const LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA+gAAACyCAMAAADmgBXa
 /* ===================== ESTADO ===================== */
 const S = {
   clientes: [], proveedores: [], productos: [],
-  solicitudes: [], cotizaciones: [], notas: [], ventas: [], gastos: [], compras: [],
+  solicitudes: [], cotizaciones: [], notas: [], ventas: [], gastos: [], compras: [], usuarios: [],
   config: { tasa: 0, empresa: {nombre:'Panaven', rif:'', tel:'', dir:''}, iva: 16 },
   view: 'inicio',
   sub: { contactos:'clientes', cotizar:'cotizaciones', ventas:'ventas', gastos:'gastos' },
@@ -646,6 +666,7 @@ function modalHead(title, sub){
 
 /* ===================== NAVEGACIÓN ===================== */
 function go(view){
+  if(ROL && !puedeVer(view)) view = 'inicio';
   S.view = view;
   ['inicio','contactos','productos','cotizar','ventas','gastos','ajustes'].forEach(v=>{
     $('view-'+v).style.display = v===view ? '' : 'none';
@@ -682,13 +703,34 @@ function newDocFromTab(){
 }
 
 /* ===================== SUSCRIPCIONES ===================== */
-/* ===================== AUTENTICACIÓN ===================== */
+/* ===================== AUTENTICACIÓN Y ROLES ===================== */
 const auth = firebase.auth();
 let appStarted = false;
+let ROL = null;   // admin | vendedor | almacen (se carga de la colección usuarios)
 document.body.classList.add('locked'); // nada visible hasta verificar la sesión
 
-// Las conexiones a Firestore solo arrancan cuando hay sesión iniciada:
-// con las reglas cerradas, conectarse antes daría "permisos insuficientes".
+const PERMISOS = {
+  admin:    {nav:['inicio','contactos','productos','cotizar','ventas','gastos','ajustes'], finanzas:true,  costos:true,  anular:true,  admin:true},
+  vendedor: {nav:['inicio','contactos','productos','cotizar','ventas','ajustes'],          finanzas:false, costos:false, anular:false, admin:false},
+  almacen:  {nav:['inicio','productos','cotizar','ajustes'],                                finanzas:false, costos:false, anular:false, admin:false},
+};
+const puede = x => !!(PERMISOS[ROL] && PERMISOS[ROL][x]);
+const puedeVer = v => (PERMISOS[ROL]?.nav || []).includes(v);
+const quien = () => auth.currentUser?.email || '';
+
+function applyRol(){
+  ['inicio','contactos','productos','cotizar','ventas','gastos','ajustes'].forEach(v=>{
+    const b = $('nav-'+v); if(b) b.style.display = puedeVer(v) ? '' : 'none';
+  });
+  const cajaBtn = document.querySelector('#tabs-ventas button[data-sub="caja"]');
+  if(cajaBtn) cajaBtn.style.display = puede('finanzas') ? '' : 'none';
+  ['cardTasa','cardEmpresa','cardRespaldo','cardUsuarios'].forEach(id=>{
+    const el = $(id); if(el) el.style.display = puede('admin') ? '' : 'none';
+  });
+  if(!puedeVer(S.view)) go('inicio');
+}
+
+// Las conexiones a Firestore solo arrancan cuando hay sesión iniciada y rol aprobado
 function startApp(){
   if(appStarted) return;
   appStarted = true;
@@ -700,22 +742,52 @@ function startApp(){
   listen('cotizaciones','cotizaciones');
   listen('notas','notas');
   listen('ventas','ventas');
-  listen('gastos','gastos');
-  listen('compras','compras');
+  if(puede('finanzas')){
+    listen('gastos','gastos');
+    listen('compras','compras');
+  }
+  if(puede('admin')) listen('usuarios','usuarios');
 }
 
-auth.onAuthStateChanged(user=>{
+function mostrarPendiente(email){
+  $('loginCard').style.display = 'none';
+  $('pendCard').style.display = '';
+  const pe = $('pendEmail'); if(pe) pe.textContent = email || '';
+  document.body.classList.add('locked');
+  $('loginScreen').classList.add('show');
+}
+
+auth.onAuthStateChanged(async user=>{
   const login = $('loginScreen');
-  if(user){
-    login.classList.remove('show');
-    document.body.classList.remove('locked');
-    const chip = $('sesionUsuario'); if(chip) chip.textContent = user.email || '';
-    startApp();
-  } else {
+  if(!user){
     document.body.classList.add('locked');
+    $('pendCard').style.display = 'none';
+    $('loginCard').style.display = '';
     login.classList.add('show');
     const lg = $('loginLogo'); if(lg && !lg.src) lg.src = LOGO;
     setTimeout(()=> $('loginEmail')?.focus(), 100);
+    return;
+  }
+  try{
+    // Ficha del usuario: se crea sola (como "pendiente") en su primer inicio de sesión
+    const ref = db.collection('usuarios').doc(user.uid);
+    let d = await ref.get();
+    if(!d.exists){
+      await ref.set({email: user.email||'', rol:'pendiente',
+        creado: firebase.firestore.FieldValue.serverTimestamp()});
+      d = await ref.get();
+    }
+    const rol = d.data()?.rol || 'pendiente';
+    if(!PERMISOS[rol]) return mostrarPendiente(user.email);
+    ROL = rol;
+    login.classList.remove('show');
+    document.body.classList.remove('locked');
+    const chip = $('sesionUsuario'); if(chip) chip.textContent = (user.email||'')+' · '+rol;
+    startApp();
+    applyRol();
+  }catch(e){
+    console.error('rol', e);
+    mostrarPendiente(user.email); // si la ficha no se puede leer, mejor esperar que abrir de más
   }
 });
 
@@ -779,6 +851,7 @@ function listenConfig(){
 
 /* ===================== CONFIG ===================== */
 function openTasa(){
+  if(!puede('admin')) return toast('Solo un administrador puede cambiar la tasa', true);
   openModal(modalHead('Tasa del día','Bolívares por dólar para conversión de montos.') + `
     <label class="f">Tasa Bs/USD</label>
     <input class="f" id="mTasa" type="number" step="0.01" inputmode="decimal" value="${S.config.tasa||''}" placeholder="Ej. 60.00">
@@ -954,11 +1027,11 @@ function productoForm(p){
     </div>
     <div class="grid2">
       <div><label class="f">Precio de venta (USD)</label><input class="f" id="pPrecio" type="number" step="0.01" inputmode="decimal" value="${p?.precio ?? ''}" placeholder="0.00"></div>
-      <div><label class="f">Costo (USD)</label><input class="f" id="pCosto" type="number" step="0.01" inputmode="decimal" value="${p?.costo ?? ''}" placeholder="lo que te cuesta"></div>
+      ${puede('costos')?`<div><label class="f">Costo (USD)</label><input class="f" id="pCosto" type="number" step="0.01" inputmode="decimal" value="${p?.costo ?? ''}" placeholder="lo que te cuesta"></div>`:'<div></div>'}
     </div>
     <div class="grid2">
       <div><label class="f">Existencia (stock)</label><input class="f" id="pStock" type="number" step="any" inputmode="decimal" value="${p?.stock ?? ''}" placeholder="0"></div>
-      <div><span style="display:block; padding:26px 2px 0; color:var(--muted); font-size:12px">${(p?.costo!=null&&p?.precio)?('Margen: '+usd((p.precio||0)-(p.costo||0))+' por unidad'):'El costo se actualiza solo al recibir compras'}</span></div>
+      <div><span style="display:block; padding:26px 2px 0; color:var(--muted); font-size:12px">${puede('costos')?((p?.costo!=null&&p?.precio)?('Margen: '+usd((p.precio||0)-(p.costo||0))+' por unidad'):'El costo se actualiza solo al recibir compras'):''}</span></div>
     </div>
     <label class="f">Notas</label>
     <textarea class="f" id="pNotas" placeholder="Proveedor habitual, costo, equivalencias…">${esc(p?.notas||'')}</textarea>
@@ -974,12 +1047,13 @@ async function saveProducto(id){
     nombre: $('pNombre').value.trim(), codigo: $('pCodigo').value.trim(),
     unidad: $('pUnidad').value.trim() || 'und',
     precio: num($('pPrecio').value),
-    costo: $('pCosto').value === '' ? null : num($('pCosto').value),
     stock: $('pStock').value === '' ? null : num($('pStock').value),
     notas: $('pNotas').value.trim(),
     actualizado: firebase.firestore.FieldValue.serverTimestamp()
   };
   if(!data.nombre) return toast('El nombre es obligatorio', true);
+  const cEl = $('pCosto');
+  if(cEl) data.costo = cEl.value === '' ? null : num(cEl.value); // solo si el rol lo ve
   if(id) await db.collection('productos').doc(id).update(data);
   else { data.creado = firebase.firestore.FieldValue.serverTimestamp(); await db.collection('productos').add(data); }
   closeModal(); toast(id ? 'Producto actualizado' : 'Producto registrado');
@@ -1459,6 +1533,7 @@ async function confirmarVenta(cotId){
       cotizacionId: c.id, cotizacionNum: c.numero,
       notaId: notaRef.id, notaNum,
       pagos: [], abonado: 0, saldo: t.total,
+      por: quien(),                 // quién registró la venta
       orden: orden,                // orden de compra del cliente {url, tipo, nombre} o null
       estadoPago: 'pendiente',     // pendiente | abonada | pagada
       estado: 'activa',            // activa | anulada
@@ -1507,6 +1582,7 @@ function openVenta(id){
     <div class="dl">
       <div class="r"><span>Fecha</span><b>${fdate(v.fecha)}</b></div>
       <div class="r"><span>Tipo</span><b>${v.conIva===false ? 'Sin IVA — solo nota de entrega' : 'Con IVA (facturable)'}</b></div>
+      ${v.por?`<div class="r"><span>Registrada por</span><b>${esc(v.por)}</b></div>`:''}
       ${v.cotizacionNum?`<div class="r"><span>Cotización</span><b>${esc(v.cotizacionNum)}</b></div>`:''}
       ${v.notaNum?`<div class="r"><span>Nota de entrega</span><b>${esc(v.notaNum)}${nota?' · '+nota.estado:''}</b></div>`:''}
       ${v.orden?`<div class="r"><span>Orden de compra</span><b style="color:var(--brand); cursor:pointer" onclick="verArchivo('${v.orden.fid||''}','${v.orden.url||''}')">Ver respaldo 📎</b></div>`:''}
@@ -1531,7 +1607,7 @@ function openVenta(id){
       ${(!v.orden && v.estado!=='anulada')?`<button class="btn ghost" style="grid-column:1/-1" onclick="adjuntarOrden('${id}')">Adjuntar orden de compra 📎</button>`:''}
       <button class="btn ghost" onclick="printVenta('${id}')">Imprimir / PDF</button>
       ${v.notaId?`<button class="btn ghost" onclick="openNota('${v.notaId}')">Ver nota de entrega</button>`:''}
-      ${v.estado!=='anulada'?`<button class="btn danger" style="grid-column:1/-1" onclick="anularVenta('${id}')">Anular venta</button>`:''}
+      ${(v.estado!=='anulada'&&puede('anular'))?`<button class="btn danger" style="grid-column:1/-1" onclick="anularVenta('${id}')">Anular venta</button>`:''}
     </div>`);
 }
 
@@ -1728,6 +1804,7 @@ async function saveAbono(vid){
     moneda, monto: r2(monto), tasa: moneda==='Bs'||tasa? r2(tasa):0,
     montoUsd, montoBs,
     comp: comp,   // comprobante del pago {url, tipo, nombre, ruta} o null
+    por: quien(),
     ref: $('aRef').value.trim(), notas: $('aNotas').value.trim()
   };
   const ref = db.collection('ventas').doc(vid);
@@ -1766,6 +1843,7 @@ function openPago(vid, pid){
       <div class="r"><span><b>Equivalente USD</b></span><b>${usd(p.montoUsd)}</b></div>
       ${p.ref?`<div class="r"><span>Referencia</span><b>${esc(p.ref)}</b></div>`:''}
       ${p.notas?`<div class="r"><span>Nota</span><b>${esc(p.notas)}</b></div>`:''}
+      ${p.por?`<div class="r"><span>Registrado por</span><b>${esc(p.por)}</b></div>`:''}
     </div>
     ${p.comp
       ? `<button class="btn ghost block" style="margin-top:8px" onclick="verArchivo('${p.comp.fid||''}','${p.comp.url||''}')">Ver comprobante del pago 📎</button>`
@@ -1773,11 +1851,12 @@ function openPago(vid, pid){
     <div class="doc-actions">
       <button class="btn ghost" onclick="printRecibo('${vid}','${pid}')">Imprimir / PDF</button>
       <button class="btn ghost" onclick="openVenta('${vid}')">Volver a la venta</button>
-      <button class="btn danger" style="grid-column:1/-1" onclick="delAbono('${vid}','${pid}')">Eliminar abono</button>
+      ${puede('anular')?`<button class="btn danger" style="grid-column:1/-1" onclick="delAbono('${vid}','${pid}')">Eliminar abono</button>`:''}
     </div>`);
 }
 
 async function delAbono(vid, pid){
+  if(!puede('anular')) return toast('Tu rol no permite eliminar abonos', true);
   if(!confirm('¿Eliminar este abono? El saldo de la venta se recalculará y su comprobante se borrará.')) return;
   const vLocal = S.ventas.find(x=>x.id===vid);
   const pagoLocal = vLocal ? (vLocal.pagos||[]).find(p=>p.id===pid) : null;
@@ -1846,6 +1925,7 @@ function adjuntarOrden(vid){
 }
 
 async function anularVenta(id){
+  if(!puede('anular')) return toast('Tu rol no permite anular ventas', true);
   const v = S.ventas.find(x=>x.id===id); if(!v) return;
   const msg = (v.abonado>0)
     ? `Esta venta tiene abonos por ${usd(v.abonado)}. ¿Anular la venta ${v.numero} y su nota ${v.notaNum||''} de todas formas?`
@@ -2741,7 +2821,10 @@ function renderVentas(){
   const sw = $('qVentas');
   if(sw && sw.parentElement) sw.parentElement.style.display = (S.sub.ventas==='caja') ? 'none' : '';
 
-  if(S.sub.ventas==='caja'){ renderCaja(box); return; }
+  if(S.sub.ventas==='caja'){
+    if(!puede('finanzas')){ S.sub.ventas='ventas'; }
+    else { renderCaja(box); return; }
+  }
 
   if(S.sub.ventas==='porcobrar'){
     // Deudas agrupadas por cliente, de mayor a menor
@@ -2795,6 +2878,31 @@ function exportarRespaldo(){
   a.download = 'panaven-respaldo-'+hoyISO()+'.json';
   a.click();
   toast('Respaldo descargado: guárdalo en un lugar seguro');
+}
+
+/* ===================== USUARIOS Y ROLES (admin) ===================== */
+function renderUsuarios(){
+  const box = $('listaUsuarios'); if(!box) return;
+  if(!puede('admin')){ box.innerHTML=''; return; }
+  const yo = auth.currentUser?.uid;
+  box.innerHTML = S.usuarios.length ? S.usuarios
+    .slice().sort((a,b)=> (a.email||'').localeCompare(b.email||''))
+    .map(u=>`
+      <div class="rep-row" style="align-items:center">
+        <span>${esc(u.email||u.id)}${u.id===yo?' <small>(tú)</small>':''}${u.rol==='pendiente'?' <span class="badge pendiente">pendiente</span>':''}</span>
+        <select class="f" style="width:auto; padding:6px 8px; font-size:13px" ${u.id===yo?'disabled title="No puedes cambiar tu propio rol"':''}
+          onchange="cambiarRol('${u.id}', this.value)">
+          ${['admin','vendedor','almacen','pendiente'].map(r=>`<option ${u.rol===r?'selected':''}>${r}</option>`).join('')}
+        </select>
+      </div>`).join('')
+    : '<p style="color:var(--muted); font-size:13px">Aún nadie más ha iniciado sesión.</p>';
+}
+async function cambiarRol(uid, rol){
+  try{
+    await db.collection('usuarios').doc(uid).update({rol,
+      actualizado: firebase.firestore.FieldValue.serverTimestamp()});
+    toast('Rol asignado: '+rol);
+  }catch(e){ console.error('cambiarRol', e); toast('No se pudo cambiar el rol', true); }
 }
 
 /* ===================== RESTAURAR RESPALDO ===================== */
@@ -2924,6 +3032,9 @@ function cambiarMes(paso){
 }
 
 function renderReporte(){
+  const bloque = $('repBloque');
+  if(bloque) bloque.style.display = puede('finanzas') ? '' : 'none';
+  if(!puede('finanzas')) return;
   const lbl = $('repMesLabel'); if(!lbl) return;
   lbl.textContent = mesLabel(repMes);
   const next = $('repMesNext'); if(next) next.disabled = (repMes >= hoyISO().slice(0,7));
@@ -3057,6 +3168,7 @@ function renderAll(){
   renderCotizar();
   renderVentas();
   renderGastos();
+  renderUsuarios();
 }
 
 /* ===================== SERVICE WORKER ===================== */
