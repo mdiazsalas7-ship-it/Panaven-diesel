@@ -769,6 +769,15 @@ input.f:focus, select.f:focus, textarea.f:focus, .search input:focus{
       </p>
       <div id="listaUsuarios"></div>
     </div>
+    <div class="card" id="cardReset" style="border-color:rgba(220,38,38,.35)">
+      <h3 style="font-size:15px; margin-bottom:4px; color:var(--bad)">Zona peligrosa</h3>
+      <p style="color:var(--muted); font-size:13px; margin:0 0 10px">
+        Borra <b>TODOS</b> los datos operativos (clientes, productos, cotizaciones, ventas, compras, gastos,
+        empleados, cuentas y fotos de respaldo) para arrancar el sistema desde cero.
+        Los usuarios y los datos de la empresa se conservan. <b>No hay marcha atrás</b> — descarga un respaldo antes.
+      </p>
+      <button class="btn danger block" onclick="vaciarSistema()">Vaciar todos los datos…</button>
+    </div>
     <div class="card">
       <h3 style="font-size:15px; margin-bottom:4px">Sesión</h3>
       <p style="color:var(--muted); font-size:13px; margin:0 0 10px">Conectado como <b id="sesionUsuario">—</b></p>
@@ -937,7 +946,7 @@ function applyRol(){
     const b = document.querySelector(`#tabs-ventas button[data-sub="${t}"]`);
     if(b) b.style.display = puede('finanzas') ? '' : 'none';
   });
-  ['cardTasa','cardEmpresa','cardRespaldo','cardUsuarios'].forEach(id=>{
+  ['cardTasa','cardEmpresa','cardRespaldo','cardUsuarios','cardReset'].forEach(id=>{
     const el = $(id); if(el) el.style.display = puede('admin') ? '' : 'none';
   });
   if(!puedeVer(S.view)) go('inicio');
@@ -1273,7 +1282,7 @@ function renderProductos(){
     return `<div class="item-row" onclick="openProducto('${p.id}')">
       <div class="avatar" style="background:#0f766e">${esc((p.nombre||'?').charAt(0).toUpperCase())}</div>
       <div class="info"><b>${esc(p.nombre)}</b>
-        <small>${esc(p.codigo||'Sin código')} · ${esc(p.unidad||'und')}</small></div>
+        <small>${esc(p.codigo||'Sin código')} · ${esc(p.unidad||'und')}${!num(p.precio)?' · <span style="color:var(--warn); font-weight:700">falta precio de venta</span>':''}</small></div>
       <div class="right">
         <b>${p.precio ? usd(p.precio) : '—'}</b>
         <small>${st===null ? '' : (st<=0 ? '<span class="badge rechazada">agotado</span>' : 'stock: '+money(st))}</small>
@@ -1479,9 +1488,12 @@ function openSolicitud(id){
     </div>
     <label class="f">Estado</label>
     <select class="f" onchange="setEstado('solicitudes','${id}',this.value)">
-      ${['borrador','enviada','respondida','anulada'].map(e=>`<option ${e===s.estado?'selected':''}>${e}</option>`).join('')}
+      ${['borrador','enviada','respondida','aprobada','anulada'].map(e=>`<option ${e===s.estado?'selected':''}>${e}</option>`).join('')}
     </select>
     <div class="doc-actions">
+      ${puede('finanzas') ? (s.compraId
+        ? `<button class="btn primary" style="grid-column:1/-1" onclick="closeModal();go('gastos');setSubTab('gastos','compras');setTimeout(()=>openCompra('${s.compraId}'),150)">Ver compra ${esc(s.compraNum||'')}</button>`
+        : `<button class="btn primary" style="grid-column:1/-1" onclick="compraDesdeSolicitud('${id}')">Registrar compra (el proveedor cotizó)</button>`) : ''}
       <button class="btn ok" onclick="waSolicitud('${id}')">Enviar WhatsApp</button>
       <button class="btn ghost" onclick="printSolicitud('${id}')">Imprimir / PDF</button>
       <button class="btn ghost" onclick="solicitudForm(S.solicitudes.find(x=>x.id==='${id}'))">Editar</button>
@@ -2290,6 +2302,94 @@ function waSend(tel, txt){
 }
 
 /* ===================== COMPRAS A PROVEEDORES ===================== */
+/* --- Solicitud aprobada → Compra con items (el círculo del inventario) --- */
+let solCompraId = null, solLines = [];
+function compraDesdeSolicitud(solId){
+  const so = S.solicitudes.find(x=>x.id===solId); if(!so) return;
+  if(so.compraId) return toast('Esta solicitud ya generó la compra '+(so.compraNum||''), true);
+  if(!so.items || !so.items.length) return toast('La solicitud no tiene artículos', true);
+  solCompraId = solId;
+  solLines = so.items.map(i=>({desc:i.desc, cant:num(i.cant)||1, unidad:i.unidad||'und', costo:''}));
+  openModal(modalHead('Registrar compra', 'Solicitud '+so.numero+' · '+(so.contactoNombre||'')) + `
+    <p style="color:var(--muted); font-size:13px; margin:0 0 10px">
+      Pon el <b>costo unitario</b> que te cotizó el proveedor. La compra nace en <b>Por pagar</b>
+      y, al recibir la mercancía, estos artículos entrarán al inventario.
+    </p>
+    <div id="solBox"></div>
+    <div class="dl"><div class="r"><span><b>TOTAL DE LA COMPRA</b></span><b id="solTotal">$ 0,00</b></div></div>
+    <label class="f">Factura / cotización del proveedor (foto o PDF)</label>
+    <input class="f" id="solFactura" type="file" accept="image/*,application/pdf">
+    <div class="actions">
+      <button class="btn primary block" id="btnSolCompra" onclick="confirmarCompraSol()">Crear compra por pagar</button>
+    </div>`);
+  solDraw();
+}
+function solDraw(){
+  const box = $('solBox'); if(!box) return;
+  box.innerHTML = solLines.map((l,i)=>`
+    <div class="card" style="padding:10px; margin:0 0 8px">
+      <b style="font-size:13.5px">${esc(l.desc)}</b>
+      <div class="grid2" style="margin-top:6px">
+        <input class="f" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Cantidad *"
+          value="${l.cant}" oninput="solLines[${i}].cant=this.value; solTotalCalc()">
+        <input class="f" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Costo unit. USD *"
+          value="${l.costo}" oninput="solLines[${i}].costo=this.value; solTotalCalc()">
+      </div>
+    </div>`).join('');
+  solTotalCalc();
+}
+function solTotalCalc(){
+  const t = solLines.reduce((s,l)=> s + (num(l.cant)||0)*(num(l.costo)||0), 0);
+  const el = $('solTotal'); if(el) el.textContent = usd(r2(t));
+}
+async function confirmarCompraSol(){
+  const so = S.solicitudes.find(x=>x.id===solCompraId); if(!so) return;
+  const items = [];
+  for(const l of solLines){
+    const cant = num(l.cant), costo = num(l.costo);
+    if(cant<=0) return toast('Indica la cantidad de "'+l.desc+'"', true);
+    if(costo<=0) return toast('Indica el costo de "'+l.desc+'"', true);
+    items.push({desc:l.desc, cant:r2(cant), unidad:l.unidad||'und', costo:r2(costo)});
+  }
+  const total = r2(items.reduce((s,i)=> s + i.cant*i.costo, 0));
+  const prov = S.proveedores.find(p=>p.id===so.contactoId);
+  const file = $('solFactura')?.files[0];
+  const btn = $('btnSolCompra');
+  btn.disabled = true; btn.textContent = file ? 'Subiendo respaldo…' : 'Creando compra…';
+  try{
+    let factura = null;
+    if(file){ factura = await subirArchivo(file, 'compras/fact-'+Date.now()); btn.textContent='Creando compra…'; }
+    const numero = await nextNumber('com');
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+    const [y,m,d] = hoyISO().split('-').map(Number);
+    const cref = db.collection('compras').doc();
+    const batch = db.batch();
+    batch.set(cref, {
+      numero,
+      proveedorId: so.contactoId||'', proveedorNombre: so.contactoNombre || prov?.nombre || '',
+      desc: 'Solicitud '+so.numero+' — '+items.length+' artículo'+(items.length!==1?'s':''),
+      items,
+      moneda:'USD', monto: total, tasa: r2(tasaActual()||0), total,
+      fechaISO: hoyISO(), fecha: firebase.firestore.Timestamp.fromDate(new Date(y, m-1, d, 12)),
+      factura,
+      solicitudId: so.id, solicitudNum: so.numero,
+      pagos: [], abonado: 0, saldo: total,
+      estadoPago:'pendiente', estado:'activa', recibida:false, por: quien(),
+      creado: now, actualizado: now
+    });
+    batch.update(db.collection('solicitudes').doc(so.id),
+      {estado:'aprobada', compraId: cref.id, compraNum: numero, actualizado: now});
+    await batch.commit();
+    closeModal();
+    toast('Compra '+numero+' creada en Por pagar: '+usd(total));
+    go('gastos'); setSubTab('gastos','compras');
+    setTimeout(()=> openCompra(cref.id), 250);
+  }catch(e){
+    console.error('confirmarCompraSol', e); toast(e.message||'No se pudo crear la compra', true);
+    btn.disabled = false; btn.textContent = 'Crear compra por pagar';
+  }
+}
+
 function compraForm(){
   if(!S.proveedores.length) return toast('Primero registra el proveedor en Contactos', true);
   openModal(modalHead('Registrar compra', 'Lo que Panaven le compra (y debe) a un proveedor.') + `
@@ -2373,6 +2473,8 @@ function openCompra(id){
     <div class="dl">
       <div class="r"><span>Fecha</span><b>${fdate(c.fecha)}</b></div>
       <div class="r"><span>Descripción</span><b>${esc(c.desc)}</b></div>
+      ${(c.items&&c.items.length)?c.items.map(i=>`<div class="r"><span>${esc(i.desc)} × ${money(i.cant)}</span><b>${usd(i.cant*i.costo)}</b></div>`).join(''):''}
+      ${c.solicitudNum?`<div class="r"><span>Solicitud</span><b>${esc(c.solicitudNum)}</b></div>`:''}
       <div class="r"><span>Total</span><b>${usd(c.total)}${c.moneda==='Bs'?` <small>(${bs(c.monto)})</small>`:''}</b></div>
       <div class="r"><span>Pagado</span><b>${usd(c.abonado||0)}</b></div>
       <div class="r"><span><b>Saldo por pagar</b></span><b>${usd(saldo)}</b></div>
@@ -2445,12 +2547,22 @@ async function anularCompra(id){
 /* --- Recepción de mercancía: las cantidades de la compra entran al inventario --- */
 let recCompraId = null, recLines = [];
 
+const normaliza = t => String(t||'').trim().toLowerCase();
 function recibirForm(cid){
   const c = S.compras.find(x=>x.id===cid); if(!c) return;
   if(c.recibida) return toast('Esta compra ya fue recibida', true);
-  if(!S.productos.length) return toast('Primero registra los productos en Inventario', true);
   recCompraId = cid;
-  recLines = [{productoId: S.productos[0]?.id||'', cant:'', costo:''}];
+  if(c.items && c.items.length){
+    // Precargar desde la compra: lo que ya existe se vincula, lo nuevo se creará solo
+    recLines = c.items.map(i=>{
+      const p = S.productos.find(x=> normaliza(x.nombre)===normaliza(i.desc));
+      return p ? {productoId:p.id, nombre:'', cant:i.cant, costo:i.costo}
+               : {productoId:'__new__', nombre:i.desc, cant:i.cant, costo:i.costo};
+    });
+  } else {
+    if(!S.productos.length) return toast('Primero registra los productos en Inventario', true);
+    recLines = [{productoId: S.productos[0]?.id||'', nombre:'', cant:'', costo:''}];
+  }
   openModal(modalHead('Recibir mercancía', 'Compra '+c.numero+' · '+(c.proveedorNombre||'')) + `
     <p style="color:var(--muted); font-size:13px; margin:0 0 10px">
       Indica qué llegó y cuánto: las cantidades <b>entran al inventario</b> de una vez.
@@ -2470,7 +2582,9 @@ function recDraw(){
   const box = $('recBox'); if(!box) return;
   box.innerHTML = recLines.map((l,i)=>`
     <div class="card" style="padding:10px; margin:0 0 8px">
+      ${l.productoId==='__new__'?`<span class="badge abonada" style="margin-bottom:6px">NUEVO EN INVENTARIO</span>`:''}
       <select class="f" onchange="recLines[${i}].productoId=this.value; recDraw()">
+        ${l.nombre?`<option value="__new__" ${l.productoId==='__new__'?'selected':''}>➕ Crear producto: ${esc(l.nombre)}</option>`:''}
         ${S.productos.slice().sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'')).map(p=>
           `<option value="${p.id}" ${l.productoId===p.id?'selected':''}>${esc(p.nombre)}${p.stock!=null?' — stock: '+money(p.stock):''}</option>`).join('')}
       </select>
@@ -2492,26 +2606,45 @@ async function confirmarRecepcion(){
   const c = S.compras.find(x=>x.id===recCompraId); if(!c) return;
   const items = [];
   for(const l of recLines){
-    const p = S.productos.find(x=>x.id===l.productoId);
     const cant = num(l.cant);
+    if(l.productoId==='__new__'){
+      if(!l.nombre) return toast('Falta el nombre del producto nuevo', true);
+      if(cant<=0) return toast('Indica la cantidad de "'+l.nombre+'"', true);
+      items.push({nuevo:true, nombre:l.nombre, cant:r2(cant),
+        costo: num(l.costo)>0 ? r2(num(l.costo)) : null});
+      continue;
+    }
+    const p = S.productos.find(x=>x.id===l.productoId);
     if(!p) return toast('Elige el producto en cada línea', true);
     if(cant<=0) return toast('Indica la cantidad de "'+p.nombre+'"', true);
     items.push({productoId: p.id, nombre: p.nombre, cant: r2(cant),
       costo: num(l.costo)>0 ? r2(num(l.costo)) : null});
   }
-  // No permitir el mismo producto dos veces (confunde el conteo)
-  const ids = items.map(i=>i.productoId);
-  if(new Set(ids).size !== ids.length) return toast('Hay un producto repetido: júntalo en una sola línea', true);
+  // No permitir repetidos (ni entre existentes ni entre nuevos)
+  const claves = items.map(i=> i.productoId || 'nuevo:'+normaliza(i.nombre));
+  if(new Set(claves).size !== claves.length) return toast('Hay un producto repetido: júntalo en una sola línea', true);
   const btn = $('btnRecibir');
   btn.disabled = true; btn.textContent = 'Registrando…';
   try{
+    const now = firebase.firestore.FieldValue.serverTimestamp();
     const batch = db.batch();
+    let nuevos = 0;
     items.forEach(it=>{
-      const upd = {stock: firebase.firestore.FieldValue.increment(it.cant),
-        actualizado: firebase.firestore.FieldValue.serverTimestamp()};
+      if(it.nuevo){
+        // El producto nace aquí: nombre, costo y stock de la compra. El precio de venta lo pones tú después.
+        const ref = db.collection('productos').doc();
+        batch.set(ref, {nombre: it.nombre, codigo:'', unidad:'und',
+          precio: 0, costo: it.costo, stock: it.cant, notas:'',
+          creado: now, actualizado: now});
+        it.productoId = ref.id; delete it.nuevo; it.creado = true;
+        nuevos++;
+        return;
+      }
+      const upd = {stock: firebase.firestore.FieldValue.increment(it.cant), actualizado: now};
       if(it.costo != null) upd.costo = it.costo;   // último costo de compra
       batch.update(db.collection('productos').doc(it.productoId), upd);
     });
+    window._recNuevos = nuevos;
     batch.update(db.collection('compras').doc(recCompraId), {
       recibida: true,
       recepcion: {fecha: firebase.firestore.Timestamp.now(), items},
@@ -2519,7 +2652,9 @@ async function confirmarRecepcion(){
     });
     await batch.commit();
     closeModal();
-    toast('Mercancía recibida: el inventario se actualizó');
+    const nu = window._recNuevos||0;
+    toast(nu ? 'Inventario actualizado: '+nu+' producto'+(nu!==1?'s':'')+' nuevo'+(nu!==1?'s':'')+' creado'+(nu!==1?'s':'')+' — ponles precio de venta'
+             : 'Mercancía recibida: el inventario se actualizó');
     setTimeout(()=> openCompra(recCompraId), 200);
   }catch(e){
     console.error('confirmarRecepcion', e);
@@ -3714,6 +3849,36 @@ async function exportarMesExcel(){
   }catch(e){
     console.error('exportarMesExcel', e);
     toast(e.message||'No se pudo generar el Excel', true);
+  }
+}
+
+/* ===================== VACIAR EL SISTEMA (arrancar de cero) ===================== */
+async function vaciarSistema(){
+  if(!puede('admin')) return;
+  if(!confirm('⚠️ Esto BORRA todos los datos operativos del sistema.\n\n¿Descargaste un respaldo? ¿Seguro que quieres continuar?')) return;
+  const palabra = prompt('Última barrera: escribe BORRAR (en mayúsculas) para confirmar el vaciado total.');
+  if(palabra !== 'BORRAR') return toast('Vaciado cancelado');
+  const cols = [...COLS_RESPALDO, 'archivos'];   // todo lo operativo + las fotos
+  toast('Vaciando el sistema…');
+  try{
+    let borrados = 0;
+    for(const col of cols){
+      while(true){
+        const snap = await db.collection(col).limit(300).get();
+        if(snap.empty) break;
+        const b = db.batch();
+        snap.docs.forEach(d=> b.delete(d.ref));
+        await b.commit();
+        borrados += snap.size;
+        toast('Vaciando… '+borrados+' registros eliminados');
+      }
+    }
+    await db.collection('config').doc('counters').set({}); // numeración desde cero: V-0001, COT-0001…
+    toast('Sistema vacío: '+borrados+' registros eliminados. Arrancando de cero.');
+    setTimeout(()=> location.reload(), 1500);
+  }catch(e){
+    console.error('vaciarSistema', e);
+    toast('El vaciado se interrumpió: puedes repetirlo con seguridad', true);
   }
 }
 
