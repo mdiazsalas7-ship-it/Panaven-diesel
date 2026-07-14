@@ -962,6 +962,8 @@ function startApp(){
     listen('empleados','empleados');
   }
   if(puede('admin')) listen('usuarios','usuarios');
+  actualizarTasaBCV();
+  setInterval(actualizarTasaBCV, 4*60*60*1000); // refresco cada 4 horas
 }
 
 function mostrarPendiente(email){
@@ -1053,7 +1055,7 @@ function listenConfig(){
     S.config.iva = (c.iva ?? 16);
     S.config.empresa = c.empresa || S.config.empresa;
   }
-  $('tasaChip').textContent = S.config.tasa ? money(S.config.tasa) : 'Fijar';
+  pintarTasa();
   $('cfgTasa').value = S.config.tasa || '';
   $('cfgIva').value = S.config.iva;
   $('cfgNombre').value = S.config.empresa.nombre || '';
@@ -1062,6 +1064,54 @@ function listenConfig(){
   $('cfgDir').value = S.config.empresa.dir || '';
   renderAll();
   });
+}
+
+/* ===================== TASA BCV AUTOMÁTICA =====================
+   La tasa se consulta sola de fuentes públicas del BCV al abrir la app
+   y cada 4 horas. Cada venta, abono, gasto o pago congela la tasa de SU día:
+   así las finanzas siempre cuadran aunque los procesos pasen en días distintos. */
+let tasaBCV = null, tasaBCVFecha = null;
+const tasaActual = () => (Number(tasaBCV)>0) ? Math.round(tasaBCV*100)/100 : (Number(S.config.tasa)||0);
+
+async function actualizarTasaBCV(){
+  const fuentes = [
+    {url:'https://ve.dolarapi.com/v1/dolares/oficial', lee: d => d && (d.promedio || d.precio)},
+    {url:'https://pydolarve.org/api/v1/dollar?page=bcv&monitor=usd', lee: d => d && (d.price || (d.monitors && d.monitors.usd && d.monitors.usd.price))}
+  ];
+  for(const f of fuentes){
+    try{
+      const r = await fetch(f.url, {cache:'no-store'});
+      if(!r.ok) continue;
+      const v = Number(f.lee(await r.json()));
+      if(v > 0){
+        tasaBCV = Math.round(v*100)/100;
+        tasaBCVFecha = new Date();
+        pintarTasa();
+        // Compartir la tasa del día con todo el equipo (si tengo permiso de escritura)
+        if(puede('admin') && Math.abs((Number(S.config.tasa)||0) - tasaBCV) > 0.005){
+          db.collection('config').doc('general').set({
+            tasa: tasaBCV,
+            tasaFecha: firebase.firestore.FieldValue.serverTimestamp(),
+            tasaFuente: 'BCV (automática)'
+          }, {merge:true}).catch(()=>{});
+        }
+        return true;
+      }
+    }catch(e){ /* probar la siguiente fuente */ }
+  }
+  pintarTasa(); // sin internet o fuentes caídas: se mantiene la última tasa conocida
+  return false;
+}
+function pintarTasa(){
+  const chip = $('tasaChip'); if(!chip) return;
+  const t = tasaActual();
+  chip.textContent = t ? money(t) : 'Fijar';
+  const cont = chip.closest('.tasa-chip');
+  if(cont){
+    const lbl = cont.querySelector('small');
+    if(lbl) lbl.textContent = tasaBCV ? 'TASA BCV · AUTO' : 'TASA BS/USD';
+    cont.title = tasaBCV ? ('BCV actualizada: '+(tasaBCVFecha?tasaBCVFecha.toLocaleString('es-VE'):'')) : 'Tasa manual — toca para fijar';
+  }
 }
 
 /* ===================== CONFIG ===================== */
@@ -1360,7 +1410,7 @@ function calcTotals(){
   const ivaPct = S.config.iva || 16;
   const iva = ivaOn ? sub*ivaPct/100 : 0;
   const tot = sub + iva;
-  const tasa = num($('dTasa')?.value) || S.config.tasa || 0;
+  const tasa = num($('dTasa')?.value) || tasaActual() || 0;
   box.innerHTML = `
     <div class="row"><span>Subtotal</span><b>${usd(sub)}</b></div>
     ${ivaOn?`<div class="row"><span>IVA ${ivaPct}%</span><b>${usd(iva)}</b></div>`:''}
@@ -1468,7 +1518,7 @@ function cotizacionForm(c, cliId){
     ${linesEditor(true)}
     <div class="grid2" style="margin-top:12px">
       <div><label class="f" style="margin-top:0">Tasa Bs/USD</label>
-        <input class="f" id="dTasa" type="number" step="0.01" inputmode="decimal" value="${c?.tasa || S.config.tasa || ''}" oninput="calcTotals()"></div>
+        <input class="f" id="dTasa" type="number" step="0.01" inputmode="decimal" value="${tasaActual() || c?.tasa || ''}" oninput="calcTotals()"></div>
       <div><label class="f" style="margin-top:0">Validez (días)</label>
         <input class="f" id="dValidez" type="number" inputmode="numeric" value="${c?.validez ?? 5}"></div>
     </div>
@@ -1502,7 +1552,7 @@ async function saveCotizacion(id){
     contactoId, contactoNombre: cli?.nombre||'', items, conIva,
     ivaPct: S.config.iva||16,
     subtotal: t.sub, iva: t.iva, total: t.tot,
-    tasa: num($('dTasa').value) || S.config.tasa || 0,
+    tasa: num($('dTasa').value) || tasaActual() || 0,
     validez: num($('dValidez').value) || 5,
     notas: $('dNotas').value.trim(),
     actualizado: firebase.firestore.FieldValue.serverTimestamp()
@@ -1680,7 +1730,7 @@ function vTipoChange(cotId){
   const c = S.cotizaciones.find(x=>x.id===cotId); if(!c) return;
   const conIva = $('vTipo').value === 'fiscal';
   const t = ventaCalc(c, conIva);
-  const tasa = c.tasa || S.config.tasa || 0;
+  const tasa = tasaActual() || c.tasa || 0;
   $('vResumen').innerHTML = `
     <div class="r"><span>Subtotal</span><b>${usd(t.subtotal)}</b></div>
     ${conIva?`<div class="r"><span>IVA ${t.ivaPct}%</span><b>${usd(t.iva)}</b></div>`:''}
@@ -1744,7 +1794,7 @@ async function confirmarVenta(cotId){
       conIva: conIva, ivaPct: t.ivaPct,
       tipoVenta: conIva ? 'fiscal' : 'nota',   // las dos vertientes
       subtotal: t.subtotal, iva: t.iva, total: t.total,
-      tasa: c.tasa || S.config.tasa || 0,
+      tasa: tasaActual() || c.tasa || 0,   // tasa del DÍA DE LA VENTA, no la de la cotización
       cotizacionId: c.id, cotizacionNum: c.numero,
       notaId: notaRef.id, notaNum,
       pagos: [], abonado: 0, saldo: t.total,
@@ -1942,7 +1992,7 @@ function abonoForm(vid){
     <label class="f">Monto recibido *</label>
     <input class="f" id="aMonto" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" oninput="abonoPreview()">
     <label class="f">Tasa Bs/USD (para convertir)</label>
-    <input class="f" id="aTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${S.config.tasa||v.tasa||''}" oninput="abonoPreview()">
+    <input class="f" id="aTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${tasaActual()||v.tasa||''}" oninput="abonoPreview()">
     <label class="f">Referencia / № de operación</label>
     <input class="f" id="aRef" placeholder="Ej. 00123456 (opcional)">
     <label class="f">Comprobante del pago (foto o PDF) *</label>
@@ -1965,7 +2015,7 @@ function abonoMetodoChange(){
   const hint = $('aRetHint');
   if(m === 'Retención de IVA'){
     const v = S.ventas.find(x=>x.id===abonoVentaId);
-    const tasa = num($('aTasa').value) || S.config.tasa || 0;
+    const tasa = num($('aTasa').value) || tasaActual() || 0;
     if(v && v.iva > 0 && tasa > 0){
       $('aMonto').value = r2(v.iva * 0.75 * tasa);   // 75% del IVA en bolívares
     }
@@ -1979,7 +2029,7 @@ function abonoPreview(){
   const box = $('aPreview'); if(!box) return;
   const monto = num($('aMonto').value);
   const moneda = $('aMoneda').value;
-  const tasa = num($('aTasa').value) || S.config.tasa || 0;
+  const tasa = num($('aTasa').value) || tasaActual() || 0;
   if(monto<=0){ box.innerHTML=''; return; }
   const usdVal = moneda==='Bs' ? (tasa>0 ? monto/tasa : 0) : monto;
   box.innerHTML = `<div class="r"><span>Equivale a</span><b>${usd(usdVal)}${moneda==='Bs'&&tasa<=0?' — falta la tasa':''}</b></div>`;
@@ -1989,7 +2039,7 @@ async function saveAbono(vid){
   const monto = num($('aMonto').value);
   if(monto<=0) return toast('Indica el monto recibido', true);
   const moneda = $('aMoneda').value;
-  const tasa = num($('aTasa').value) || S.config.tasa || 0;
+  const tasa = num($('aTasa').value) || tasaActual() || 0;
   if(moneda==='Bs' && tasa<=0) return toast('Indica la tasa Bs/USD para convertir', true);
   const montoUsd = r2(moneda==='Bs' ? monto/tasa : monto);
   const montoBs  = r2(moneda==='Bs' ? monto : (tasa ? monto*tasa : 0));
@@ -2259,7 +2309,7 @@ function compraForm(){
     <label class="f">Monto total *</label>
     <input class="f" id="cMonto" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" oninput="compraPreview()">
     <label class="f">Tasa Bs/USD (para convertir)</label>
-    <input class="f" id="cTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${S.config.tasa||''}" oninput="compraPreview()">
+    <input class="f" id="cTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${tasaActual()||''}" oninput="compraPreview()">
     <label class="f">Factura del proveedor (foto o PDF)</label>
     <input class="f" id="cFactura" type="file" accept="image/*,application/pdf">
     <div class="dl" id="cPreview"></div>
@@ -2271,7 +2321,7 @@ function compraPreview(){
   const box = $('cPreview'); if(!box) return;
   const monto = num($('cMonto').value);
   const moneda = $('cMoneda').value;
-  const tasa = num($('cTasa').value) || S.config.tasa || 0;
+  const tasa = num($('cTasa').value) || tasaActual() || 0;
   if(monto<=0){ box.innerHTML=''; return; }
   const usdVal = moneda==='Bs' ? (tasa>0 ? monto/tasa : 0) : monto;
   box.innerHTML = `<div class="r"><span>Deuda en dólares</span><b>${usd(usdVal)}${moneda==='Bs'&&tasa<=0?' — falta la tasa':''}</b></div>`;
@@ -2283,7 +2333,7 @@ async function saveCompra(){
   const monto = num($('cMonto').value);
   if(monto<=0) return toast('Indica el monto', true);
   const moneda = $('cMoneda').value;
-  const tasa = num($('cTasa').value) || S.config.tasa || 0;
+  const tasa = num($('cTasa').value) || tasaActual() || 0;
   if(moneda==='Bs' && tasa<=0) return toast('Indica la tasa Bs/USD para convertir', true);
   const prov = S.proveedores.find(p=>p.id===$('cProv').value);
   if(!prov) return toast('Elige el proveedor', true);
@@ -2501,7 +2551,7 @@ function pagoCompraForm(cid){
     <label class="f">Monto pagado *</label>
     <input class="f" id="pcMonto" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" oninput="pagoCompraPreview()">
     <label class="f">Tasa Bs/USD (para convertir)</label>
-    <input class="f" id="pcTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${S.config.tasa||''}" oninput="pagoCompraPreview()">
+    <input class="f" id="pcTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${tasaActual()||''}" oninput="pagoCompraPreview()">
     ${selectCuentaHTML('pcCuenta', 'Bs')}
     <label class="f">Referencia / № de operación</label>
     <input class="f" id="pcRef" placeholder="Opcional">
@@ -2516,7 +2566,7 @@ function pagoCompraPreview(){
   const box = $('pcPreview'); if(!box) return;
   const monto = num($('pcMonto').value);
   const moneda = $('pcMoneda').value;
-  const tasa = num($('pcTasa').value) || S.config.tasa || 0;
+  const tasa = num($('pcTasa').value) || tasaActual() || 0;
   if(monto<=0){ box.innerHTML=''; return; }
   const usdVal = moneda==='Bs' ? (tasa>0 ? monto/tasa : 0) : monto;
   box.innerHTML = `<div class="r"><span>Equivale a</span><b>${usd(usdVal)}${moneda==='Bs'&&tasa<=0?' — falta la tasa':''}</b></div>`;
@@ -2525,7 +2575,7 @@ async function savePagoCompra(cid){
   const monto = num($('pcMonto').value);
   if(monto<=0) return toast('Indica el monto pagado', true);
   const moneda = $('pcMoneda').value;
-  const tasa = num($('pcTasa').value) || S.config.tasa || 0;
+  const tasa = num($('pcTasa').value) || tasaActual() || 0;
   if(moneda==='Bs' && tasa<=0) return toast('Indica la tasa Bs/USD', true);
   const montoUsd = r2(moneda==='Bs' ? monto/tasa : monto);
   const fcomp = $('pcComp')?.files[0];
@@ -2613,6 +2663,7 @@ async function delPagoCompra(cid, pid){
 
 const FRECUENCIAS = {mensual:'Mensual', quincenal:'Quincenal', semanal:'Semanal'};
 const montoSugerido = e => {
+  if(e.tipo==='destajo') return 0;   // a destajo: el monto lo pone cada trabajo
   const su = num(e.sueldo)||0;
   return e.frecuencia==='quincenal' ? r2(su/2) : e.frecuencia==='semanal' ? r2(su*12/52) : r2(su);
 };
@@ -2627,12 +2678,19 @@ function empleadoForm(e){
     </div>
     <label class="f">Cargo</label>
     <input class="f" id="eCargo" value="${esc(e?.cargo||'')}" placeholder="Ej. Vendedor de mostrador">
-    <div class="grid2">
-      <div><label class="f">Sueldo mensual (USD) *</label><input class="f" id="eSueldo" type="number" step="0.01" inputmode="decimal" value="${e?.sueldo ?? ''}" placeholder="0.00"></div>
-      <div><label class="f">Frecuencia de pago</label>
-        <select class="f" id="eFrec">
-          ${Object.entries(FRECUENCIAS).map(([k,v])=>`<option value="${k}" ${e?.frecuencia===k?'selected':''}>${v}</option>`).join('')}
-        </select></div>
+    <label class="f">Tipo de empleado</label>
+    <select class="f" id="eTipo" onchange="$('eFijoCampos').style.display = this.value==='destajo' ? 'none' : ''">
+      <option value="fijo" ${e?.tipo!=='destajo'?'selected':''}>Fijo — sueldo por período</option>
+      <option value="destajo" ${e?.tipo==='destajo'?'selected':''}>A destajo — se paga por trabajo realizado</option>
+    </select>
+    <div id="eFijoCampos" style="${e?.tipo==='destajo'?'display:none':''}">
+      <div class="grid2">
+        <div><label class="f">Sueldo mensual (USD) *</label><input class="f" id="eSueldo" type="number" step="0.01" inputmode="decimal" value="${e?.sueldo ?? ''}" placeholder="0.00"></div>
+        <div><label class="f">Frecuencia de pago</label>
+          <select class="f" id="eFrec">
+            ${Object.entries(FRECUENCIAS).map(([k,v])=>`<option value="${k}" ${e?.frecuencia===k?'selected':''}>${v}</option>`).join('')}
+          </select></div>
+      </div>
     </div>
     <label class="f">Fecha de ingreso</label>
     <input class="f" id="eIngreso" type="date" value="${e?.fechaIngreso||hoyISO()}">
@@ -2646,11 +2704,13 @@ function empleadoForm(e){
 async function saveEmpleado(id){
   const nombre = $('eNombre').value.trim();
   if(!nombre) return toast('El nombre es obligatorio', true);
+  const tipo = $('eTipo').value;
   const sueldo = num($('eSueldo').value);
-  if(sueldo<=0) return toast('Indica el sueldo mensual', true);
+  if(tipo==='fijo' && sueldo<=0) return toast('Indica el sueldo mensual del empleado fijo', true);
   const data = {
     nombre, cedula: $('eCedula').value.trim(), tel: $('eTel').value.trim(),
-    cargo: $('eCargo').value.trim(), sueldo: r2(sueldo),
+    cargo: $('eCargo').value.trim(),
+    tipo, sueldo: tipo==='fijo' ? r2(sueldo) : 0,
     frecuencia: $('eFrec').value, fechaIngreso: $('eIngreso').value || hoyISO(),
     notas: $('eNotas').value.trim(),
     actualizado: firebase.firestore.FieldValue.serverTimestamp()
@@ -2672,8 +2732,10 @@ function openEmpleado(id){
     <div class="dl">
       ${e.cedula?`<div class="r"><span>Cédula</span><b>${esc(e.cedula)}</b></div>`:''}
       ${e.tel?`<div class="r"><span>Teléfono</span><b>${esc(e.tel)}</b></div>`:''}
-      <div class="r"><span>Sueldo</span><b>${usd(e.sueldo)} / mes · ${FRECUENCIAS[e.frecuencia]||'Mensual'}</b></div>
-      <div class="r"><span>Pago por período</span><b>${usd(montoSugerido(e))}</b></div>
+      ${e.tipo==='destajo'
+        ? `<div class="r"><span>Modalidad</span><b>A destajo — por trabajo realizado</b></div>`
+        : `<div class="r"><span>Sueldo</span><b>${usd(e.sueldo)} / mes · ${FRECUENCIAS[e.frecuencia]||'Mensual'}</b></div>
+           <div class="r"><span>Pago por período</span><b>${usd(montoSugerido(e))}</b></div>`}
       ${e.fechaIngreso?`<div class="r"><span>Ingreso</span><b>${e.fechaIngreso.split('-').reverse().join('/')}</b></div>`:''}
       <div class="r"><span><b>Adelantos pendientes</b></span><b style="color:${adel>0.009?'var(--warn)':'inherit'}">${usd(adel)}</b></div>
     </div>
@@ -2685,7 +2747,7 @@ function openEmpleado(id){
         <b>${usd(g.montoUsd)}</b></div>`).join('')}
     </div>`:''}
     <div class="doc-actions">
-      ${e.activo!==false?`<button class="btn primary" style="grid-column:1/-1" onclick="pagarNominaForm('${id}')">Pagar nómina</button>
+      ${e.activo!==false?`<button class="btn primary" style="grid-column:1/-1" onclick="pagarNominaForm('${id}')">${e.tipo==='destajo'?'Pagar trabajo':'Pagar nómina'}</button>
       <button class="btn ok" onclick="adelantoForm('${id}')">Dar adelanto</button>`:''}
       <button class="btn ghost" onclick="empleadoForm(S.empleados.find(x=>x.id==='${id}'))">Editar</button>
       <button class="btn ghost" style="grid-column:1/-1" onclick="toggleEmpleado('${id}')">${e.activo===false?'Reactivar empleado':'Marcar como inactivo'}</button>
@@ -2702,11 +2764,13 @@ async function toggleEmpleado(id){
 function pagarNominaForm(id){
   const e = S.empleados.find(x=>x.id===id); if(!e) return;
   const adel = r2(e.adelantoSaldo||0);
-  openModal(modalHead('Pagar nómina', e.nombre+' · '+usd(e.sueldo)+'/mes ('+(FRECUENCIAS[e.frecuencia]||'Mensual')+')') + `
-    <label class="f">Período que pagas</label>
-    <input class="f" id="nPeriodo" placeholder="Ej. 1ra quincena de julio">
+  const destajo = e.tipo==='destajo';
+  openModal(modalHead(destajo?'Pagar trabajo':'Pagar nómina',
+    e.nombre + (destajo?' · a destajo':' · '+usd(e.sueldo)+'/mes ('+(FRECUENCIAS[e.frecuencia]||'Mensual')+')')) + `
+    <label class="f">${destajo?'Trabajo que pagas *':'Período que pagas'}</label>
+    <input class="f" id="nPeriodo" placeholder="${destajo?'Ej. Reparación bomba de inyección Iveco':'Ej. 1ra quincena de julio'}">
     <label class="f">Monto a pagar (USD) *</label>
-    <input class="f" id="nMonto" type="number" step="0.01" inputmode="decimal" value="${montoSugerido(e)}">
+    <input class="f" id="nMonto" type="number" step="0.01" inputmode="decimal" value="${destajo?'':montoSugerido(e)}" placeholder="0.00">
     ${adel>0.009?`
     <label class="f">Descontar de adelantos (debe ${usd(adel)})</label>
     <input class="f" id="nDescuento" type="number" step="0.01" inputmode="decimal" min="0" max="${adel}" placeholder="0.00">
@@ -2727,6 +2791,7 @@ async function pagarNomina(id){
   if(desc > monto + 0.009) return toast('El descuento no puede superar el monto del período', true);
   const neto = r2(monto - desc);   // lo que sale de caja de verdad
   const periodo = $('nPeriodo').value.trim();
+  if(e.tipo==='destajo' && !periodo) return toast('Describe el trabajo que estás pagando', true);
   if(!confirm(`Pagar a ${e.nombre}: ${usd(neto)} en efectivo/banco`+(desc>0.009?` (ya descontados ${usd(desc)} de adelantos)`:'')+`. ¿Confirmar?`)) return;
   const btn = $('btnNomina'); btn.disabled = true; btn.textContent = 'Registrando…';
   try{
@@ -2736,9 +2801,9 @@ async function pagarNomina(id){
     const batch = db.batch();
     batch.set(gref, {
       categoria: 'Sueldos y pagos a personal',
-      desc: 'Nómina — '+e.nombre+(periodo?' ('+periodo+')':'')+(desc>0.009?' · desc. adelanto '+usd(desc):''),
+      desc: (e.tipo==='destajo'?'Pago a destajo — ':'Nómina — ')+e.nombre+(periodo?' ('+periodo+')':'')+(desc>0.009?' · desc. adelanto '+usd(desc):''),
       tipoPago: 'nomina', empleadoId: id, empleadoNombre: e.nombre,
-      moneda: 'USD', monto: neto, tasa: r2(S.config.tasa||0), montoUsd: neto,
+      moneda: 'USD', monto: neto, tasa: r2(tasaActual()||0), montoUsd: neto,
       metodo: $('nMetodo').value, ...cuentaDe('nCuenta'), por: quien(),
       fechaISO: hoyISO(), fecha: firebase.firestore.Timestamp.fromDate(new Date(y, m-1, d, 12)),
       creado: now, actualizado: now
@@ -2783,7 +2848,7 @@ async function darAdelanto(id){
       categoria: 'Sueldos y pagos a personal',
       desc: 'Adelanto — '+e.nombre+(nota?' ('+nota+')':''),
       tipoPago: 'adelanto', empleadoId: id, empleadoNombre: e.nombre,
-      moneda: 'USD', monto: r2(monto), tasa: r2(S.config.tasa||0), montoUsd: r2(monto),
+      moneda: 'USD', monto: r2(monto), tasa: r2(tasaActual()||0), montoUsd: r2(monto),
       metodo: $('aMetodoAdel').value, ...cuentaDe('aCuentaAdel'), por: quien(),
       fechaISO: hoyISO(), fecha: firebase.firestore.Timestamp.fromDate(new Date(y, m-1, d, 12)),
       creado: now, actualizado: now
@@ -2825,7 +2890,7 @@ function gastoForm(g){
     <label class="f">Monto *</label>
     <input class="f" id="gMonto" type="number" inputmode="decimal" min="0" step="0.01" value="${g?g.monto:''}" placeholder="0.00" oninput="gastoPreview()">
     <label class="f">Tasa Bs/USD (para convertir)</label>
-    <input class="f" id="gTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${g?.tasa||S.config.tasa||''}" oninput="gastoPreview()">
+    <input class="f" id="gTasa" type="number" inputmode="decimal" min="0" step="0.01" value="${tasaActual()||g?.tasa||''}" oninput="gastoPreview()">
     <label class="f">Método de pago</label>
     <select class="f" id="gMetodo">
       ${METODOS.map(m=>`<option ${g&&g.metodo===m?'selected':''}>${m}</option>`).join('')}
@@ -2842,7 +2907,7 @@ function gastoPreview(){
   const box = $('gPreview'); if(!box) return;
   const monto = num($('gMonto').value);
   const moneda = $('gMoneda').value;
-  const tasa = num($('gTasa').value) || S.config.tasa || 0;
+  const tasa = num($('gTasa').value) || tasaActual() || 0;
   if(monto<=0){ box.innerHTML=''; return; }
   const usdVal = moneda==='Bs' ? (tasa>0 ? monto/tasa : 0) : monto;
   box.innerHTML = `<div class="r"><span>Equivale a</span><b>${usd(usdVal)}${moneda==='Bs'&&tasa<=0?' — falta la tasa':''}</b></div>`;
@@ -2854,7 +2919,7 @@ async function saveGasto(id){
   const monto = num($('gMonto').value);
   if(monto<=0) return toast('Indica el monto', true);
   const moneda = $('gMoneda').value;
-  const tasa = num($('gTasa').value) || S.config.tasa || 0;
+  const tasa = num($('gTasa').value) || tasaActual() || 0;
   if(moneda==='Bs' && tasa<=0) return toast('Indica la tasa Bs/USD para convertir', true);
   const fechaISO = $('gFecha').value || hoyISO();
   const [y,m,d] = fechaISO.split('-').map(Number);
@@ -2931,8 +2996,11 @@ function renderGastos(){
 
   if(sub==='personal'){
     const activos = S.empleados.filter(e=>e.activo!==false);
-    const nomina = activos.reduce((s,e)=> s+(num(e.sueldo)||0), 0);
-    if(chip) chip.textContent = activos.length ? 'Nómina mensual: '+usd(r2(nomina)) : '';
+    const fijos = activos.filter(e=>e.tipo!=='destajo');
+    const nomina = fijos.reduce((s,e)=> s+(num(e.sueldo)||0), 0);
+    const nDest = activos.length - fijos.length;
+    if(chip) chip.textContent = activos.length
+      ? 'Nómina fija: '+usd(r2(nomina))+(nDest?' · '+nDest+' a destajo':'') : '';
     const l = S.empleados
       .filter(e=> !q || [e.nombre,e.cargo,e.cedula].join(' ').toLowerCase().includes(q))
       .sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''));
@@ -2940,8 +3008,8 @@ function renderGastos(){
       <div class="item-row" onclick="openEmpleado('${e.id}')" style="${e.activo===false?'opacity:.55':''}">
         <div class="avatar">${esc((e.nombre||'?').charAt(0))}</div>
         <div class="info"><b>${esc(e.nombre)}</b>
-          <small>${esc(e.cargo||'—')} · ${FRECUENCIAS[e.frecuencia]||'Mensual'}${e.activo===false?' · inactivo':''}</small></div>
-        <div class="right"><b>${usd(e.sueldo)}</b>
+          <small>${esc(e.cargo||'—')} · ${e.tipo==='destajo'?'A destajo':(FRECUENCIAS[e.frecuencia]||'Mensual')}${e.activo===false?' · inactivo':''}</small></div>
+        <div class="right"><b>${e.tipo==='destajo'?'—':usd(e.sueldo)}</b>
           ${(e.adelantoSaldo||0)>0.009?`<small style="color:var(--warn)">adelanto ${usd(r2(e.adelantoSaldo))}</small>`:''}</div>
       </div>`).join('')
       : `<div class="empty">No hay empleados${q?' que coincidan':' registrados'}. Registra el primero con el botón de arriba.</div>`;
@@ -3355,7 +3423,7 @@ async function toggleCuenta(id){
 function renderCuentas(box){
   const activas = S.cuentas.filter(c=>c.activo!==false);
   // Total general en USD (las cuentas en Bs se convierten a la tasa de hoy)
-  const tasa = num(S.config.tasa)||0;
+  const tasa = tasaActual();
   let total = 0;
   activas.forEach(c=>{
     const s = saldoDeCuenta(c);
@@ -3388,7 +3456,7 @@ function waEstadoCuenta(clave){
   if(!deudas.length) return toast('Este cliente no tiene saldos pendientes', true);
   const cli = S.clientes.find(x=>x.id===clave) || S.clientes.find(x=>x.nombre===deudas[0].contactoNombre);
   const emp = S.config.empresa;
-  const tasa = S.config.tasa || 0;
+  const tasa = tasaActual();
   const nombre = deudas[0].contactoNombre || cli?.nombre || '';
   let total = 0;
   let txt = `*${emp.nombre||'Panaven'}* — Estado de cuenta\n`;
