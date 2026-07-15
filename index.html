@@ -1124,7 +1124,7 @@ async function actualizarTasaBCV(){
         tasaBCV = Math.round(v*100)/100;
         tasaBCVFecha = new Date();
         pintarTasa();
-        try{ guardarTasaHist(hoyISO(), tasaBCV); }catch(e){}
+        try{ await archivarTasaDeHoy(tasaBCV); }catch(e){}
         // Compartir la tasa del día con todo el equipo (si tengo permiso de escritura)
         if(puede('admin') && Math.abs((Number(S.config.tasa)||0) - tasaBCV) > 0.005){
           db.collection('config').doc('general').set({
@@ -1156,35 +1156,10 @@ function pintarTasa(){
 const tasasCache = {};        // 'YYYY-MM-DD' → tasa (memoria de la sesión)
 let tasasDocLeido = false;    // el archivo histórico propio (config/tasas) se lee una vez
 
-async function consultarTasaHistorica(f){   // f = 'YYYY-MM-DD'
-  const [y,m,dd] = f.split('-');
-  const leeHist = d => {
-    const h = (d && (d.history || d.data || d.results)) || (Array.isArray(d) ? d : []);
-    const x = Array.isArray(h) ? h[0] : h;
-    return x && (x.price || x.value || x.dollar || x.rate);
-  };
-  const intentos = [
-    {url:`https://bcv-api.rafnixg.dev/rates/${f}`,            lee:d=> d && (d.dollar||d.usd||d.rate||d.price)},
-    {url:`https://bcv-api.rafnixg.dev/rates/${dd}-${m}-${y}`, lee:d=> d && (d.dollar||d.usd||d.rate||d.price)},
-    {url:`https://pydolarve.org/api/v2/dollar/history?page=bcv&monitor=usd&start_date=${dd}-${m}-${y}&end_date=${dd}-${m}-${y}`, lee:leeHist},
-    {url:`https://pydolarve.org/api/v1/dollar/history?page=bcv&monitor=usd&start_date=${dd}-${m}-${y}&end_date=${dd}-${m}-${y}`, lee:leeHist},
-  ];
-  for(const it of intentos){
-    try{
-      const r = await fetch(it.url);
-      if(!r.ok){ console.warn('[tasa histórica]', it.url, '→ HTTP', r.status); continue; }
-      const v = Number(it.lee(await r.json()));
-      if(v>0) return r2(v);
-      console.warn('[tasa histórica]', it.url, '→ respuesta sin valor');
-    }catch(e){ console.warn('[tasa histórica]', it.url, '→', e.message); }
-  }
-  return 0;
-}
-
 async function tasaDeFecha(iso){
   if(!iso || iso >= hoyISO()) return tasaActual() || 0;   // hoy: la tasa viva
   if(tasasCache[iso]) return tasasCache[iso];
-  // archivo histórico propio del sistema (se llena solo con el uso)
+  // El archivo de tasas de Panaven: se llena solo, día a día, desde que el sistema vive
   if(!tasasDocLeido){
     tasasDocLeido = true;
     try{
@@ -1193,15 +1168,37 @@ async function tasaDeFecha(iso){
     }catch(e){}
     if(tasasCache[iso]) return tasasCache[iso];
   }
-  // fines de semana y feriados: rige la última tasa publicada (hasta 6 días atrás)
-  for(let k=0; k<6; k++){
+  // fines de semana y feriados: rige la última tasa archivada (hasta 6 días atrás)
+  for(let k=1; k<6; k++){
     const d = new Date(iso+'T12:00:00'); d.setDate(d.getDate()-k);
     const f = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    const v = tasasCache[f] || await consultarTasaHistorica(f);
-    if(v>0){ guardarTasaHist(iso, v); if(f!==iso) guardarTasaHist(f, v); return v; }
+    if(tasasCache[f] > 0){ guardarTasaHist(iso, tasasCache[f]); return tasasCache[f]; }
   }
-  return 0;   // no se consiguió: el usuario la escribe del portal del BCV
+  return 0;   // fecha anterior al archivo: el usuario la escribe una vez y queda guardada
 }
+// Guarda la tasa de hoy y rellena los días recientes sin registro
+// (feriados o días sin abrir la app: rige la última tasa vigente)
+async function archivarTasaDeHoy(v){
+  if(!tasasDocLeido){
+    tasasDocLeido = true;
+    try{
+      const d = await db.collection('config').doc('tasas').get();
+      if(d.exists) Object.assign(tasasCache, d.data());
+    }catch(e){}
+  }
+  guardarTasaHist(hoyISO(), v, true);   // la de hoy, siempre fresca
+  // buscar hacia atrás el último día archivado (máx 14) y tapar el hueco intermedio
+  let ultima = 0;
+  const huecos = [];
+  for(let k=1; k<=14; k++){
+    const d = new Date(hoyISO()+'T12:00:00'); d.setDate(d.getDate()-k);
+    const f = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    if(tasasCache[f] > 0){ ultima = tasasCache[f]; break; }
+    huecos.push(f);
+  }
+  if(ultima > 0) huecos.forEach(f=> guardarTasaHist(f, ultima));
+}
+
 function guardarTasaHist(iso, v, forzar){
   if(tasasCache[iso] && !forzar) return;
   tasasCache[iso] = v;
