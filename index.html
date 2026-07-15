@@ -736,6 +736,17 @@ input.f:focus, select.f:focus, textarea.f:focus, .search input:focus{
         <input class="f" id="cfgTasa" type="number" step="0.01" inputmode="decimal" placeholder="Ej. 60.00">
         <button class="btn primary" onclick="saveTasa()">Guardar tasa</button>
       </div>
+      <div style="border-top:1.5px dashed var(--line); margin-top:14px; padding-top:12px">
+        <label class="f">Archivo histórico: guardar la tasa de un día específico</label>
+        <div class="grid2">
+          <input class="f" id="thFecha" type="date">
+          <input class="f" id="thValor" type="number" step="0.0001" inputmode="decimal" placeholder="Bs por USD">
+        </div>
+        <button class="btn ghost block" style="margin-top:8px" onclick="archivarTasaManual()">Archivar tasa de ese día</button>
+        <p style="color:var(--muted); font-size:12px; margin:8px 0 0">
+          Los movimientos con esa fecha la usarán automáticamente.
+        </p>
+      </div>
     </div>
     <div class="card" id="cardEmpresa">
       <h3 style="font-size:15px; margin-bottom:4px">Datos de la empresa</h3>
@@ -1146,20 +1157,27 @@ const tasasCache = {};        // 'YYYY-MM-DD' → tasa (memoria de la sesión)
 let tasasDocLeido = false;    // el archivo histórico propio (config/tasas) se lee una vez
 
 async function consultarTasaHistorica(f){   // f = 'YYYY-MM-DD'
-  // Fuente 1: histórico oficial BCV (bcv-api)
-  try{
-    const r = await fetch('https://bcv-api.rafnixg.dev/rates/'+f);
-    if(r.ok){ const d = await r.json(); const v = Number(d.dollar||d.usd||d.rate||d.price);
-      if(v>0) return r2(v); }
-  }catch(e){}
-  // Fuente 2: histórico pydolarve
-  try{
-    const [y,m,dd] = f.split('-');
-    const r = await fetch(`https://pydolarve.org/api/v1/dollar/history?page=bcv&monitor=usd&start_date=${dd}-${m}-${y}&end_date=${dd}-${m}-${y}`);
-    if(r.ok){ const d = await r.json();
-      const h = Array.isArray(d.history) ? d.history[0] : (Array.isArray(d) ? d[0] : null);
-      const v = Number(h && (h.price||h.value)); if(v>0) return r2(v); }
-  }catch(e){}
+  const [y,m,dd] = f.split('-');
+  const leeHist = d => {
+    const h = (d && (d.history || d.data || d.results)) || (Array.isArray(d) ? d : []);
+    const x = Array.isArray(h) ? h[0] : h;
+    return x && (x.price || x.value || x.dollar || x.rate);
+  };
+  const intentos = [
+    {url:`https://bcv-api.rafnixg.dev/rates/${f}`,            lee:d=> d && (d.dollar||d.usd||d.rate||d.price)},
+    {url:`https://bcv-api.rafnixg.dev/rates/${dd}-${m}-${y}`, lee:d=> d && (d.dollar||d.usd||d.rate||d.price)},
+    {url:`https://pydolarve.org/api/v2/dollar/history?page=bcv&monitor=usd&start_date=${dd}-${m}-${y}&end_date=${dd}-${m}-${y}`, lee:leeHist},
+    {url:`https://pydolarve.org/api/v1/dollar/history?page=bcv&monitor=usd&start_date=${dd}-${m}-${y}&end_date=${dd}-${m}-${y}`, lee:leeHist},
+  ];
+  for(const it of intentos){
+    try{
+      const r = await fetch(it.url);
+      if(!r.ok){ console.warn('[tasa histórica]', it.url, '→ HTTP', r.status); continue; }
+      const v = Number(it.lee(await r.json()));
+      if(v>0) return r2(v);
+      console.warn('[tasa histórica]', it.url, '→ respuesta sin valor');
+    }catch(e){ console.warn('[tasa histórica]', it.url, '→', e.message); }
+  }
   return 0;
 }
 
@@ -1184,8 +1202,8 @@ async function tasaDeFecha(iso){
   }
   return 0;   // no se consiguió: el usuario la escribe del portal del BCV
 }
-function guardarTasaHist(iso, v){
-  if(tasasCache[iso]) return;
+function guardarTasaHist(iso, v, forzar){
+  if(tasasCache[iso] && !forzar) return;
   tasasCache[iso] = v;
   db.collection('config').doc('tasas').set({[iso]: v}, {merge:true}).catch(()=>{});
 }
@@ -1213,6 +1231,16 @@ function gastoFechaTasa(){ autoTasa($('gFecha')?.value, $('gMoneda'), $('gTasa')
 function compraFechaTasa(){ autoTasa($('cFecha')?.value, $('cMoneda'), $('cTasa')); }
 function abonoFechaTasa(){ autoTasa($('aFecha')?.value, $('aMoneda'), $('aTasa')); }
 function pagoCompraFechaTasa(){ autoTasa($('pcFecha')?.value, $('pcMoneda'), $('pcTasa')); }
+
+function archivarTasaManual(){
+  const f = $('thFecha').value;
+  const v = num($('thValor').value);
+  if(!f) return toast('Elige la fecha', true);
+  if(v<=0) return toast('Escribe la tasa de ese día (del portal del BCV)', true);
+  guardarTasaHist(f, r2(v), true);
+  $('thFecha').value=''; $('thValor').value='';
+  toast('Tasa del '+f.split('-').reverse().join('/')+' archivada: '+money(r2(v)));
+}
 
 /* ===================== CONFIG ===================== */
 function openTasa(){
@@ -2168,6 +2196,7 @@ async function saveAbono(vid){
   }
 
   const fISO = $('aFecha')?.value || hoyISO();
+  if(moneda==='Bs' && fISO < hoyISO() && tasa > 0) guardarTasaHist(fISO, r2(tasa));
   const fechaPago = fISO === hoyISO()
     ? firebase.firestore.Timestamp.now()
     : firebase.firestore.Timestamp.fromDate(new Date(fISO+'T12:00:00'));
@@ -2539,6 +2568,7 @@ async function saveCompra(){
     if(file){ factura = await subirArchivo(file, 'compras/fact-'+Date.now()); btn.textContent='Guardando…'; }
     const total = r2(moneda==='Bs' ? monto/tasa : monto);
     const fechaISO = $('cFecha').value || hoyISO();
+    if(moneda==='Bs' && fechaISO < hoyISO() && tasa > 0) guardarTasaHist(fechaISO, r2(tasa));
     const [y,m,d] = fechaISO.split('-').map(Number);
     const numero = await nextNumber('com');
     await db.collection('compras').add({
@@ -2817,6 +2847,7 @@ async function savePagoCompra(cid){
   try{
     if(fcomp){ comp = await subirArchivo(fcomp, 'compras/pago-'+Date.now()); btn.textContent='Guardando…'; }
     const fISO = $('pcFecha')?.value || hoyISO();
+    if(moneda==='Bs' && fISO < hoyISO() && tasa > 0) guardarTasaHist(fISO, r2(tasa));
     const fechaPago = fISO === hoyISO()
       ? firebase.firestore.Timestamp.now()
       : firebase.firestore.Timestamp.fromDate(new Date(fISO+'T12:00:00'));
@@ -3168,6 +3199,8 @@ async function saveGasto(id){
     ...cuentaDe('gCuenta'),
     actualizado: firebase.firestore.FieldValue.serverTimestamp()
   };
+  if(data.moneda==='Bs' && data.fechaISO < hoyISO() && data.tasa > 0)
+    guardarTasaHist(data.fechaISO, r2(data.tasa));   // la tasa escrita a mano queda archivada
   try{
     if(id){ await db.collection('gastos').doc(id).update(data); }
     else { data.creado = firebase.firestore.FieldValue.serverTimestamp();
