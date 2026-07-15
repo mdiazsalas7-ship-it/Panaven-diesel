@@ -1113,6 +1113,7 @@ async function actualizarTasaBCV(){
         tasaBCV = Math.round(v*100)/100;
         tasaBCVFecha = new Date();
         pintarTasa();
+        try{ guardarTasaHist(hoyISO(), tasaBCV); }catch(e){}
         // Compartir la tasa del día con todo el equipo (si tengo permiso de escritura)
         if(puede('admin') && Math.abs((Number(S.config.tasa)||0) - tasaBCV) > 0.005){
           db.collection('config').doc('general').set({
@@ -1139,6 +1140,79 @@ function pintarTasa(){
     cont.title = tasaBCV ? ('BCV actualizada: '+(tasaBCVFecha?tasaBCVFecha.toLocaleString('es-VE'):'')) : 'Tasa manual — toca para fijar';
   }
 }
+
+/* --- Tasa BCV de una fecha pasada: para que todo cuadre al día exacto --- */
+const tasasCache = {};        // 'YYYY-MM-DD' → tasa (memoria de la sesión)
+let tasasDocLeido = false;    // el archivo histórico propio (config/tasas) se lee una vez
+
+async function consultarTasaHistorica(f){   // f = 'YYYY-MM-DD'
+  // Fuente 1: histórico oficial BCV (bcv-api)
+  try{
+    const r = await fetch('https://bcv-api.rafnixg.dev/rates/'+f);
+    if(r.ok){ const d = await r.json(); const v = Number(d.dollar||d.usd||d.rate||d.price);
+      if(v>0) return r2(v); }
+  }catch(e){}
+  // Fuente 2: histórico pydolarve
+  try{
+    const [y,m,dd] = f.split('-');
+    const r = await fetch(`https://pydolarve.org/api/v1/dollar/history?page=bcv&monitor=usd&start_date=${dd}-${m}-${y}&end_date=${dd}-${m}-${y}`);
+    if(r.ok){ const d = await r.json();
+      const h = Array.isArray(d.history) ? d.history[0] : (Array.isArray(d) ? d[0] : null);
+      const v = Number(h && (h.price||h.value)); if(v>0) return r2(v); }
+  }catch(e){}
+  return 0;
+}
+
+async function tasaDeFecha(iso){
+  if(!iso || iso >= hoyISO()) return tasaActual() || 0;   // hoy: la tasa viva
+  if(tasasCache[iso]) return tasasCache[iso];
+  // archivo histórico propio del sistema (se llena solo con el uso)
+  if(!tasasDocLeido){
+    tasasDocLeido = true;
+    try{
+      const d = await db.collection('config').doc('tasas').get();
+      if(d.exists) Object.assign(tasasCache, d.data());
+    }catch(e){}
+    if(tasasCache[iso]) return tasasCache[iso];
+  }
+  // fines de semana y feriados: rige la última tasa publicada (hasta 6 días atrás)
+  for(let k=0; k<6; k++){
+    const d = new Date(iso+'T12:00:00'); d.setDate(d.getDate()-k);
+    const f = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    const v = tasasCache[f] || await consultarTasaHistorica(f);
+    if(v>0){ guardarTasaHist(iso, v); if(f!==iso) guardarTasaHist(f, v); return v; }
+  }
+  return 0;   // no se consiguió: el usuario la escribe del portal del BCV
+}
+function guardarTasaHist(iso, v){
+  if(tasasCache[iso]) return;
+  tasasCache[iso] = v;
+  db.collection('config').doc('tasas').set({[iso]: v}, {merge:true}).catch(()=>{});
+}
+
+// Pone la tasa del día elegido en el campo (solo si el pago es en Bs)
+async function autoTasa(fISO, monedaEl, tasaEl){
+  if(!tasaEl || !fISO) return;
+  if(monedaEl && monedaEl.value !== 'Bs') return;
+  if(fISO >= hoyISO()){   // hoy: tasa viva, sin ruido
+    const t = tasaActual(); if(t>0){ tasaEl.value = t; tasaEl.dispatchEvent(new Event('input')); }
+    return;
+  }
+  tasaEl.disabled = true;
+  const v = await tasaDeFecha(fISO);
+  tasaEl.disabled = false;
+  if(v > 0){
+    tasaEl.value = v;
+    tasaEl.dispatchEvent(new Event('input'));
+    toast('Tasa BCV del '+fISO.split('-').reverse().join('/')+': '+money(v));
+  } else {
+    toast('No conseguí la tasa BCV de ese día: escríbela tú (bcv.org.ve)', true);
+  }
+}
+function gastoFechaTasa(){ autoTasa($('gFecha')?.value, $('gMoneda'), $('gTasa')); }
+function compraFechaTasa(){ autoTasa($('cFecha')?.value, $('cMoneda'), $('cTasa')); }
+function abonoFechaTasa(){ autoTasa($('aFecha')?.value, $('aMoneda'), $('aTasa')); }
+function pagoCompraFechaTasa(){ autoTasa($('pcFecha')?.value, $('pcMoneda'), $('pcTasa')); }
 
 /* ===================== CONFIG ===================== */
 function openTasa(){
@@ -2000,6 +2074,8 @@ function abonoForm(vid){
       <div class="r"><span>Total de la venta</span><b>${usd(v.total)}</b></div>
       <div class="r"><span><b>Saldo pendiente</b></span><b>${usd(saldo)}</b></div>
     </div>
+    <label class="f">Fecha del pago *</label>
+    <input class="f" id="aFecha" type="date" value="${hoyISO()}" onchange="abonoFechaTasa()">
     <label class="f">Método de pago *</label>
     <select class="f" id="aMetodo" onchange="abonoMetodoChange()">
       ${METODOS.map(m=>`<option>${m}</option>`).join('')}
@@ -2010,7 +2086,7 @@ function abonoForm(vid){
     </p>
     <span id="aCuentaWrap">${selectCuentaHTML('aCuenta', 'USD')}</span>
     <label class="f">Moneda del monto recibido</label>
-    <select class="f" id="aMoneda" onchange="abonoPreview()">
+    <select class="f" id="aMoneda" onchange="abonoPreview(); abonoFechaTasa()">
       <option value="USD">Dólares (USD)</option>
       <option value="Bs">Bolívares (Bs)</option>
     </select>
@@ -2035,6 +2111,7 @@ function abonoMetodoChange(){
   const m = $('aMetodo').value;
   $('aMoneda').value = METODOS_BS.includes(m) ? 'Bs' : 'USD';
   sugerirCuenta('aCuenta', $('aMoneda').value);
+  abonoFechaTasa();
   const wrap = $('aCuentaWrap');
   if(wrap) wrap.style.display = (m==='Retención de IVA') ? 'none' : ''; // la retención no toca ninguna cuenta
   const hint = $('aRetHint');
@@ -2090,10 +2167,14 @@ async function saveAbono(vid){
     return;
   }
 
+  const fISO = $('aFecha')?.value || hoyISO();
+  const fechaPago = fISO === hoyISO()
+    ? firebase.firestore.Timestamp.now()
+    : firebase.firestore.Timestamp.fromDate(new Date(fISO+'T12:00:00'));
   const pago = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
     numero: await nextNumber('rec'),
-    fecha: firebase.firestore.Timestamp.now(),
+    fecha: fechaPago,
     metodo: $('aMetodo').value,
     moneda, monto: r2(monto), tasa: moneda==='Bs'||tasa? r2(tasa):0,
     montoUsd, montoBs,
@@ -2411,11 +2492,11 @@ function compraForm(){
       ${S.proveedores.map(p=>`<option value="${p.id}">${esc(p.nombre)}</option>`).join('')}
     </select>
     <label class="f">Fecha *</label>
-    <input class="f" id="cFecha" type="date" value="${hoyISO()}">
+    <input class="f" id="cFecha" type="date" value="${hoyISO()}" onchange="compraFechaTasa()">
     <label class="f">Descripción *</label>
     <input class="f" id="cDesc" placeholder="Ej. 10 inyectores Bosch serie 0445">
     <label class="f">Moneda</label>
-    <select class="f" id="cMoneda" onchange="compraPreview()">
+    <select class="f" id="cMoneda" onchange="compraPreview(); compraFechaTasa()">
       <option value="USD">Dólares (USD)</option>
       <option value="Bs">Bolívares (Bs)</option>
     </select>
@@ -2687,12 +2768,14 @@ function pagoCompraForm(cid){
       <div class="r"><span>Total de la compra</span><b>${usd(c.total)}</b></div>
       <div class="r"><span><b>Saldo por pagar</b></span><b>${usd(saldo)}</b></div>
     </div>
+    <label class="f">Fecha del pago *</label>
+    <input class="f" id="pcFecha" type="date" value="${hoyISO()}" onchange="pagoCompraFechaTasa()">
     <label class="f">Método de pago *</label>
-    <select class="f" id="pcMetodo" onchange="$('pcMoneda').value = METODOS_BS.includes($('pcMetodo').value)?'Bs':'USD'; pagoCompraPreview()">
+    <select class="f" id="pcMetodo" onchange="$('pcMoneda').value = METODOS_BS.includes($('pcMetodo').value)?'Bs':'USD'; pagoCompraPreview(); pagoCompraFechaTasa()">
       ${METODOS.filter(m=>m!=='Retención de IVA').map(m=>`<option>${m}</option>`).join('')}
     </select>
     <label class="f">Moneda del monto pagado</label>
-    <select class="f" id="pcMoneda" onchange="pagoCompraPreview()">
+    <select class="f" id="pcMoneda" onchange="pagoCompraPreview(); pagoCompraFechaTasa()">
       <option value="USD">Dólares (USD)</option>
       <option value="Bs">Bolívares (Bs)</option>
     </select>
@@ -2733,10 +2816,14 @@ async function savePagoCompra(cid){
   let comp = null;
   try{
     if(fcomp){ comp = await subirArchivo(fcomp, 'compras/pago-'+Date.now()); btn.textContent='Guardando…'; }
+    const fISO = $('pcFecha')?.value || hoyISO();
+    const fechaPago = fISO === hoyISO()
+      ? firebase.firestore.Timestamp.now()
+      : firebase.firestore.Timestamp.fromDate(new Date(fISO+'T12:00:00'));
     const pago = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
       numero: await nextNumber('pp'),
-      fecha: firebase.firestore.Timestamp.now(),
+      fecha: fechaPago,
       metodo: $('pcMetodo').value, moneda,
       monto: r2(monto), tasa: r2(tasa), montoUsd,
       montoBs: r2(moneda==='Bs' ? monto : (tasa? monto*tasa : 0)),
@@ -3023,7 +3110,7 @@ const hoyISO = () => {
 function gastoForm(g){
   openModal(modalHead(g ? 'Editar gasto' : 'Registrar gasto', 'Dinero que sale del negocio.') + `
     <label class="f">Fecha *</label>
-    <input class="f" id="gFecha" type="date" value="${g ? (g.fechaISO||hoyISO()) : hoyISO()}">
+    <input class="f" id="gFecha" type="date" value="${g ? (g.fechaISO||hoyISO()) : hoyISO()}" onchange="gastoFechaTasa()">
     <label class="f">Categoría</label>
     <select class="f" id="gCat">
       ${CATEGORIAS_GASTO.map(c=>`<option ${g&&g.categoria===c?'selected':''}>${c}</option>`).join('')}
@@ -3031,7 +3118,7 @@ function gastoForm(g){
     <label class="f">Descripción *</label>
     <input class="f" id="gDesc" value="${esc(g?.desc||'')}" placeholder="Ej. Flete de repuestos desde Valencia">
     <label class="f">Moneda</label>
-    <select class="f" id="gMoneda" onchange="gastoPreview()">
+    <select class="f" id="gMoneda" onchange="gastoPreview(); gastoFechaTasa()">
       <option value="USD" ${g?.moneda!=='Bs'?'selected':''}>Dólares (USD)</option>
       <option value="Bs" ${g?.moneda==='Bs'?'selected':''}>Bolívares (Bs)</option>
     </select>
