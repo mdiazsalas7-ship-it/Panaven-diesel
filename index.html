@@ -136,6 +136,7 @@ nav.bottom button.active{color:var(--brand); background:var(--brand-soft)}
   background:var(--ink); color:#fff; border-radius:8px; padding:5px 8px; flex-shrink:0;
 }
 .docnum.sol{background:#6d28d9}
+.docnum.ped{background:#4338ca}
 .docnum.ne{background:#0f766e}
 .docnum.vta{background:#0f9d58}
 .docnum.com{background:#b45309}
@@ -147,6 +148,9 @@ nav.bottom button.active{color:var(--brand); background:var(--brand-soft)}
 .badge.rechazada,.badge.anulada{background:var(--bad-soft); color:var(--bad)}
 .badge.pendiente{background:var(--warn-soft); color:var(--warn)}
 .badge.pagada,.badge.activa{background:var(--ok-soft); color:var(--ok)}
+.badge.preparacion{background:var(--brand-soft); color:var(--brand)}
+.badge.despachado{background:var(--ok-soft); color:var(--ok)}
+.badge.cerrado{background:var(--gray-soft); color:var(--muted)}
 .badge.abonada{background:var(--brand-soft); color:var(--brand)}
 
 .empty{
@@ -663,6 +667,7 @@ input.f:focus, select.f:focus, textarea.f:focus, .search input:focus{
   <section id="view-cotizar" style="display:none">
     <div class="tabs" id="tabs-cotizar">
       <button data-sub="cotizaciones" class="active" onclick="setSubTab('cotizar','cotizaciones')"><svg fill="none" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>Cotizaciones</button>
+      <button data-sub="pedidos" onclick="setSubTab('cotizar','pedidos')"><svg fill="none" viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg>Pedidos</button>
       <button data-sub="ventas" onclick="setSubTab('cotizar','ventas')"><svg fill="none" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9v6M18 9v6"/></svg>Ventas</button>
       <button data-sub="entregas" onclick="setSubTab('cotizar','entregas')"><svg fill="none" viewBox="0 0 24 24"><path d="M3 7h11v10H3z"/><path d="M14 10h4l3 3v4h-7"/><circle cx="7" cy="18.5" r="1.8"/><circle cx="17.5" cy="18.5" r="1.8"/></svg>Entregas</button>
     </div>
@@ -857,7 +862,7 @@ const LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA+gAAACyCAMAAADmgBXa
 /* ===================== ESTADO ===================== */
 const S = {
   clientes: [], proveedores: [], productos: [],
-  solicitudes: [], cotizaciones: [], notas: [], ventas: [], gastos: [], compras: [], usuarios: [], empleados: [], cuentas: [],
+  solicitudes: [], cotizaciones: [], pedidos: [], notas: [], ventas: [], gastos: [], compras: [], usuarios: [], empleados: [], cuentas: [],
   config: { tasa: 0, empresa: {nombre:'Panaven', rif:'', tel:'', dir:''}, iva: 16 },
   view: 'inicio',
   sub: { contactos:'clientes', cotizar:'cotizaciones', ventas:'porcobrar', compras:'solicitudes', gastos:'gastos' },
@@ -914,7 +919,8 @@ function setSubTab(group, sub){
     renderContactos();
   } else if(group==='cotizar'){
     const b = $('btnNewDoc');
-    b.style.display = sub==='ventas' ? 'none' : '';   // las ventas nacen de una cotización
+    // pedidos y ventas nacen de una cotización, no se crean sueltos
+    b.style.display = (sub==='ventas' || sub==='pedidos') ? 'none' : '';
     b.textContent = sub==='cotizaciones' ? '+ Nueva cotización' : '+ Nueva nota de entrega';
     renderCotizar();
   } else if(group==='compras'){
@@ -972,7 +978,7 @@ function applyRol(){
     const b = document.querySelector(`#tabs-${g} button[data-sub="${t}"]`);
     if(b) b.style.display = 'none';
   });
-  if(ROL==='almacen'){ S.sub.cotizar='entregas'; S.sub.contactos='productos'; }
+  if(ROL==='almacen'){ S.sub.cotizar='pedidos'; S.sub.contactos='productos'; }
   if(!puede('finanzas') && (S.sub.ventas==='caja'||S.sub.ventas==='cuentas')) S.sub.ventas='porcobrar';
   ['cardTasa','cardEmpresa','cardRespaldo','cardUsuarios','cardReset'].forEach(id=>{
     const el = $(id); if(el) el.style.display = puede('admin') ? '' : 'none';
@@ -990,6 +996,7 @@ function startApp(){
   listen('productos','productos');
   listen('solicitudes','solicitudes');
   listen('cotizaciones','cotizaciones');
+  listen('pedidos','pedidos');
   listen('notas','notas');
   listen('ventas','ventas');
   listen('cuentas','cuentas');
@@ -1278,7 +1285,7 @@ async function nextNumber(tipo){ // 'cot' | 'sol' | 'ne'
     t.set(ref, {[tipo]: cur+1}, {merge:true});
     return cur+1;
   });
-  const pref = {cot:'COT', sol:'SC', ne:'NE', vta:'VTA', rec:'REC', com:'C', pp:'PP'}[tipo];
+  const pref = {cot:'COT', sol:'SC', ne:'NE', vta:'VTA', rec:'REC', com:'C', pp:'PP', ped:'PED'}[tipo];
   return pref + '-' + String(n).padStart(4,'0');
 }
 
@@ -1711,9 +1718,11 @@ function openCotizacion(id){
     <div class="doc-actions">
       <button class="btn ok" onclick="waCotizacion('${id}')">Enviar WhatsApp</button>
       <button class="btn ghost" onclick="printCotizacion('${id}')">Imprimir / PDF</button>
-      ${c.ventaId
+      ${c.pedidoId
+        ? `<button class="btn primary" style="grid-column:1/-1" onclick="closeModal();go('cotizar');setSubTab('cotizar','pedidos');setTimeout(()=>openPedido('${c.pedidoId}'),150)">Ver pedido ${esc(c.pedidoNum||'')}</button>`
+        : c.ventaId
         ? `<button class="btn primary" style="grid-column:1/-1" onclick="closeModal();go('cotizar');setSubTab('cotizar','ventas');setTimeout(()=>openVenta('${c.ventaId}'),150)">Ver venta ${esc(c.ventaNum||'')}</button>`
-        : `<button class="btn primary" style="grid-column:1/-1" onclick="registrarVenta('${id}')">Registrar venta</button>`}
+        : `<button class="btn primary" style="grid-column:1/-1" onclick="crearPedido('${id}')">Crear pedido</button>`}
       <button class="btn ghost" onclick="notaDesdeCotizacion('${id}')">Nota de entrega suelta</button>
       <button class="btn ghost" onclick="cotizacionForm(S.cotizaciones.find(x=>x.id==='${id}'))">Editar</button>
       <button class="btn danger" style="grid-column:1/-1" onclick="delDoc('cotizaciones','${id}')">Eliminar</button>
@@ -1862,13 +1871,20 @@ function vTipoChange(cotId){
     ${tasa?`<div class="r"><span>En bolívares (tasa ${money(tasa)})</span><b>${bs(t.total*tasa)}</b></div>`:''}`;
 }
 
-function registrarVenta(cotId){
+/* ===================== PEDIDOS ===================== */
+// El pedido es el compromiso confirmado del cliente. Nace de una cotización
+// (siempre), congela precios y costos, y desde su ficha se despacha:
+// ahí es donde se crean la venta y la nota de entrega, de un solo golpe.
+function pedidoLabel(p){
+  return p.estado==='preparacion' ? 'en preparación' : (p.estado||'pendiente');
+}
+
+function crearPedido(cotId){
   const c = S.cotizaciones.find(x=>x.id===cotId); if(!c) return;
-  if(c.ventaId){
-    return toast('Esta cotización ya generó la venta '+(c.ventaNum||''), true);
-  }
+  if(c.pedidoId) return toast('Esta cotización ya generó el pedido '+(c.pedidoNum||''), true);
+  if(c.ventaId)  return toast('Esta cotización ya generó la venta '+(c.ventaNum||''), true);
   if(!c.items || !c.items.length) return toast('La cotización no tiene artículos', true);
-  openModal(modalHead('Registrar venta', 'Cotización '+c.numero+' · '+(c.contactoNombre||'')) + `
+  openModal(modalHead('Crear pedido', 'Cotización '+c.numero+' · '+(c.contactoNombre||'')) + `
     <label class="f">Tipo de venta *</label>
     <select class="f" id="vTipo" onchange="vTipoChange('${cotId}')">
       <option value="fiscal" ${c.conIva?'selected':''}>Con IVA (facturable)</option>
@@ -1878,83 +1894,191 @@ function registrarVenta(cotId){
     <label class="f">Orden de compra del cliente (foto o PDF) *</label>
     <input class="f" id="vOrden" type="file" accept="image/*,application/pdf">
     <p style="color:var(--muted); font-size:12px; margin:6px 0 0">
-      Queda guardada como respaldo permanente junto a la venta. Se creará la venta y su nota de entrega.
+      Queda guardada como respaldo permanente junto al pedido. La cotización quedará
+      <b>aprobada</b> y el pedido pasará a preparación. La venta y la nota de entrega
+      se crearán al <b>despachar</b> el pedido.
     </p>
     <div class="actions">
-      <button class="btn primary block" id="btnConfVenta" onclick="confirmarVenta('${cotId}')">Crear venta + nota de entrega</button>
+      <button class="btn primary block" id="btnConfPedido" onclick="confirmarPedido('${cotId}')">Crear pedido</button>
     </div>`);
   vTipoChange(cotId);
 }
 
-async function confirmarVenta(cotId){
+async function confirmarPedido(cotId){
   const c = S.cotizaciones.find(x=>x.id===cotId); if(!c) return;
-  if(c.ventaId) return toast('Esta cotización ya generó una venta', true);
+  if(c.pedidoId) return toast('Esta cotización ya generó un pedido', true);
   const conIva = $('vTipo')?.value === 'fiscal';
   const t = ventaCalc(c, conIva);
   const file = $('vOrden')?.files[0];
-  if(!file && !confirm('No adjuntaste la orden de compra del cliente.\n\n¿Registrar la venta SIN ese respaldo? (podrás adjuntarla después)')) return;
-  const btn = $('btnConfVenta');
-  btn.disabled = true; btn.textContent = file ? 'Subiendo orden de compra…' : 'Creando venta…';
+  if(!file && !confirm('No adjuntaste la orden de compra del cliente.\n\n¿Crear el pedido SIN ese respaldo? (podrás adjuntarla después)')) return;
+  const btn = $('btnConfPedido');
+  btn.disabled = true; btn.textContent = file ? 'Subiendo orden de compra…' : 'Creando pedido…';
   try{
     let orden = null;
     if(file){
       orden = await subirArchivo(file, 'ordenes/'+c.id+'/oc-'+Date.now());
-      btn.textContent = 'Creando venta…';
+      btn.textContent = 'Creando pedido…';
     }
+    const pedNum = await nextNumber('ped');
+    const pedRef = db.collection('pedidos').doc();
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+    const pedido = {
+      numero: pedNum,
+      contactoId: c.contactoId, contactoNombre: c.contactoNombre || '',
+      items: c.items.map(i=>{
+        // Congela el costo del producto en este momento (para la ganancia real)
+        const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === (i.desc||'').trim().toLowerCase());
+        return {...i, costo: (p && p.costo!=null) ? p.costo : null};
+      }),
+      conIva, ivaPct: t.ivaPct,
+      tipoVenta: conIva ? 'fiscal' : 'nota',
+      subtotal: t.subtotal, iva: t.iva, total: t.total,
+      tasa: tasaActual() || c.tasa || 0,
+      cotizacionId: c.id, cotizacionNum: c.numero,
+      orden: orden,
+      ventaId: null, ventaNum: '', notaId: null, notaNum: '',
+      por: quien(),
+      estado: 'pendiente',   // pendiente | preparacion | despachado | cerrado | anulado
+      fecha: now, actualizado: now
+    };
+    const batch = db.batch();
+    batch.set(pedRef, pedido);
+    batch.update(db.collection('cotizaciones').doc(c.id),
+      {estado:'aprobada', pedidoId:pedRef.id, pedidoNum:pedNum, actualizado:now});
+    await batch.commit();
+    closeModal();
+    toast('Pedido '+pedNum+' creado');
+    go('cotizar'); setSubTab('cotizar','pedidos');
+    setTimeout(()=> openPedido(pedRef.id), 200);
+  }catch(e){
+    console.error('confirmarPedido', e);
+    toast(e.message || 'No se pudo crear el pedido', true);
+    if(btn){ btn.disabled = false; btn.textContent = 'Crear pedido'; }
+  }
+}
+
+function openPedido(id){
+  const p = S.pedidos.find(x=>x.id===id); if(!p) return;
+  const estados = p.ventaId ? ['despachado','cerrado','anulado'] : ['pendiente','preparacion','anulado'];
+  openModal(modalHead('Pedido '+p.numero, 'Cliente: '+(p.contactoNombre||'—')) + `
+    <span class="badge ${p.estado}">${pedidoLabel(p)}</span>
+    <div class="dl">
+      <div class="r"><span>Fecha</span><b>${fdate(p.fecha)}</b></div>
+      ${p.cotizacionNum?`<div class="r"><span>Cotización ref.</span><b>${esc(p.cotizacionNum)}</b></div>`:''}
+      ${p.items.map(i=>`<div class="r"><span>${esc(i.desc)} × ${money(i.cant)}</span><b>${usd((num(i.cant)||0)*(num(i.precio)||0))}</b></div>`).join('')}
+      <div class="r"><span>Subtotal</span><b>${usd(p.subtotal)}</b></div>
+      ${p.conIva?`<div class="r"><span>IVA ${p.ivaPct||16}%</span><b>${usd(p.iva)}</b></div>`:''}
+      <div class="r"><span><b>Total</b></span><b>${usd(p.total)}</b></div>
+      ${p.tasa?`<div class="r"><span>En bolívares (tasa ${money(p.tasa)})</span><b>${bs(p.total*p.tasa)}</b></div>`:''}
+      ${p.orden?`<div class="r"><span>Orden de compra</span><b style="color:var(--brand); cursor:pointer" onclick="verArchivo('${p.orden.fid||''}','${p.orden.url||''}')">Ver respaldo 📎</b></div>`:''}
+      ${p.por?`<div class="r"><span>Registrado por</span><b>${esc(p.por)}</b></div>`:''}
+    </div>
+    <label class="f">Estado</label>
+    <select class="f" onchange="setEstado('pedidos','${id}',this.value)">
+      ${estados.map(e=>`<option value="${e}" ${e===p.estado?'selected':''}>${e==='preparacion'?'en preparación':e}</option>`).join('')}
+    </select>
+    <div class="doc-actions">
+      <button class="btn ghost" onclick="printPedido('${id}')">Imprimir / PDF</button>
+      ${p.ventaId
+        ? `<button class="btn primary" onclick="closeModal();go('cotizar');setSubTab('cotizar','ventas');setTimeout(()=>openVenta('${p.ventaId}'),150)">Ver venta ${esc(p.ventaNum||'')}</button>`
+        : `<button class="btn primary" onclick="despacharPedido('${id}')">Despachar: crear venta + entrega</button>`}
+      ${p.notaId?`<button class="btn ghost" onclick="closeModal();go('cotizar');setSubTab('cotizar','entregas');setTimeout(()=>openNota('${p.notaId}'),150)">Ver nota ${esc(p.notaNum||'')}</button>`:''}
+      ${(!p.ventaId && puede('anular'))?`<button class="btn danger" onclick="delPedido('${id}')">Eliminar</button>`:''}
+    </div>`);
+}
+
+// Despachar = el pedido sale del almacén: crea la VENTA y su NOTA DE ENTREGA
+// en un batch atómico y enlaza todo con el pedido y la cotización de origen.
+async function despacharPedido(pedId){
+  const p = S.pedidos.find(x=>x.id===pedId); if(!p) return;
+  if(p.ventaId) return toast('Este pedido ya fue despachado (venta '+(p.ventaNum||'')+')', true);
+  if(p.estado==='anulado') return toast('El pedido está anulado', true);
+  if(!confirm('Despachar el pedido '+p.numero+':\n\n• Se creará la venta por '+usd(p.total)+'\n• Se creará su nota de entrega\n\n¿Continuar?')) return;
+  try{
     const ventaNum = await nextVentaNumber();
     const notaNum  = await nextNumber('ne');
     const ventaRef = db.collection('ventas').doc();
     const notaRef  = db.collection('notas').doc();
     const now = firebase.firestore.FieldValue.serverTimestamp();
-
     const venta = {
       numero: ventaNum,
-      contactoId: c.contactoId, contactoNombre: c.contactoNombre || '',
-      items: c.items.map(i=>{
-        // Congela el costo del producto en este momento (para calcular la ganancia real)
-        const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === (i.desc||'').trim().toLowerCase());
-        return {...i, costo: (p && p.costo!=null) ? p.costo : null};
-      }),
-      conIva: conIva, ivaPct: t.ivaPct,
-      tipoVenta: conIva ? 'fiscal' : 'nota',   // las dos vertientes
-      subtotal: t.subtotal, iva: t.iva, total: t.total,
-      tasa: tasaActual() || c.tasa || 0,   // tasa del DÍA DE LA VENTA, no la de la cotización
-      cotizacionId: c.id, cotizacionNum: c.numero,
+      contactoId: p.contactoId, contactoNombre: p.contactoNombre || '',
+      items: (p.items||[]).map(i=>({...i})),   // ya traen el costo congelado del pedido
+      conIva: !!p.conIva, ivaPct: p.ivaPct || S.config.iva || 16,
+      tipoVenta: p.tipoVenta || (p.conIva ? 'fiscal' : 'nota'),
+      subtotal: p.subtotal, iva: p.iva, total: p.total,
+      tasa: tasaActual() || p.tasa || 0,   // tasa del DÍA DEL DESPACHO
+      cotizacionId: p.cotizacionId || null, cotizacionNum: p.cotizacionNum || '',
+      pedidoId: p.id, pedidoNum: p.numero,
       notaId: notaRef.id, notaNum,
-      pagos: [], abonado: 0, saldo: t.total,
-      por: quien(),                 // quién registró la venta
-      orden: orden,                // orden de compra del cliente {url, tipo, nombre} o null
-      estadoPago: 'pendiente',     // pendiente | abonada | pagada
-      estado: 'activa',            // activa | anulada
+      pagos: [], abonado: 0, saldo: p.total,
+      por: quien(),
+      orden: p.orden || null,
+      estadoPago: 'pendiente',
+      estado: 'activa',
       fecha: now, actualizado: now
     };
     const nota = {
       numero: notaNum,
-      contactoId: c.contactoId, contactoNombre: c.contactoNombre || '',
-      items: c.items.map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und'})),
+      contactoId: p.contactoId, contactoNombre: p.contactoNombre || '',
+      items: (p.items||[]).map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und'})),
       recibe: '', notas: '',
-      cotizacionNum: c.numero,
+      cotizacionNum: p.cotizacionNum || '',
+      pedidoNum: p.numero,
       ventaId: ventaRef.id, ventaNum,
       estado: 'pendiente',
       fecha: now, actualizado: now
     };
-
     const batch = db.batch();
     batch.set(ventaRef, venta);
     batch.set(notaRef, nota);
-    batch.update(db.collection('cotizaciones').doc(c.id),
-      {estado:'aprobada', ventaId:ventaRef.id, ventaNum, actualizado:now});
+    batch.update(db.collection('pedidos').doc(p.id),
+      {estado:'despachado', ventaId:ventaRef.id, ventaNum, notaId:notaRef.id, notaNum, actualizado:now});
     await batch.commit();
-
     closeModal();
-    toast('Venta '+ventaNum+' registrada · nota '+notaNum);
+    toast('Pedido despachado · venta '+ventaNum+' · nota '+notaNum);
     go('cotizar'); setSubTab('cotizar','ventas');
     setTimeout(()=> openVenta(ventaRef.id), 200);
   }catch(e){
-    console.error('confirmarVenta', e);
-    toast(e.message || 'No se pudo registrar la venta', true);
-    if(btn){ btn.disabled = false; btn.textContent = 'Crear venta + nota de entrega'; }
+    console.error('despacharPedido', e);
+    toast(e.message || 'No se pudo despachar el pedido', true);
   }
+}
+
+// Eliminar un pedido devuelve la cotización a su estado anterior (enviada)
+// para que pueda generar un pedido nuevo si hace falta.
+async function delPedido(id){
+  const p = S.pedidos.find(x=>x.id===id); if(!p) return;
+  if(p.ventaId) return toast('No se puede eliminar: ya generó la venta '+(p.ventaNum||''), true);
+  if(!confirm('¿Eliminar el pedido '+p.numero+' definitivamente?\n\nLa cotización '+(p.cotizacionNum||'')+' volverá a quedar disponible.')) return;
+  const batch = db.batch();
+  batch.delete(db.collection('pedidos').doc(id));
+  if(p.cotizacionId){
+    batch.update(db.collection('cotizaciones').doc(p.cotizacionId), {
+      estado: 'enviada',
+      pedidoId: firebase.firestore.FieldValue.delete(),
+      pedidoNum: firebase.firestore.FieldValue.delete(),
+      actualizado: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }
+  await batch.commit();
+  closeModal(); toast('Pedido eliminado');
+}
+
+function printPedido(id){
+  const p = S.pedidos.find(x=>x.id===id); if(!p) return;
+  const cli = S.clientes.find(x=>x.id===p.contactoId) || {};
+  doPrint(printHeader('PEDIDO', p.numero, 'Fecha: '+fdate(p.fecha)+(p.cotizacionNum?' · Ref: '+p.cotizacionNum:'')) + `
+    <div class="meta"><b>Cliente:</b> ${esc(p.contactoNombre)}<br>
+      ${cli.rif?`<b>RIF/CI:</b> ${esc(cli.rif)}<br>`:''}${cli.tel?`<b>Teléfono:</b> ${esc(cli.tel)}<br>`:''}${cli.dir?`<b>Dirección:</b> ${esc(cli.dir)}<br>`:''}</div>
+    <table><tr><th style="width:40px">#</th><th>Descripción</th><th class="tr" style="width:80px">Cantidad</th><th style="width:70px">Unidad</th><th class="tr" style="width:90px">Precio</th><th class="tr" style="width:100px">Importe</th></tr>
+    ${p.items.map((i,ix)=>`<tr><td>${ix+1}</td><td>${esc(i.desc)}</td><td class="tr">${money(i.cant)}</td><td>${esc(i.unidad||'und')}</td><td class="tr">${usd(i.precio)}</td><td class="tr">${usd((num(i.cant)||0)*(num(i.precio)||0))}</td></tr>`).join('')}
+    </table>
+    <div class="tot">
+      <div>Subtotal: <b>${usd(p.subtotal)}</b></div>
+      ${p.conIva?`<div>IVA ${p.ivaPct||16}%: <b>${usd(p.iva)}</b></div>`:''}
+      <div>Total: <b>${usd(p.total)}</b></div>
+    </div>`);
 }
 
 function pagoBadge(v){ return v.estado==='anulada' ? 'anulada' : (v.estadoPago||'pendiente'); }
@@ -1973,6 +2097,7 @@ function openVenta(id){
       <div class="r"><span>Tipo</span><b>${v.conIva===false ? 'Sin IVA — solo nota de entrega' : 'Con IVA (facturable)'}</b></div>
       ${v.por?`<div class="r"><span>Registrada por</span><b>${esc(v.por)}</b></div>`:''}
       ${v.cotizacionNum?`<div class="r"><span>Cotización</span><b>${esc(v.cotizacionNum)}</b></div>`:''}
+      ${v.pedidoNum?`<div class="r"><span>Pedido</span><b>${esc(v.pedidoNum)}</b></div>`:''}
       ${v.notaNum?`<div class="r"><span>Nota de entrega</span><b>${esc(v.notaNum)}${nota?' · '+nota.estado:''}</b></div>`:''}
       ${v.orden?`<div class="r"><span>Orden de compra</span><b style="color:var(--brand); cursor:pointer" onclick="verArchivo('${v.orden.fid||''}','${v.orden.url||''}')">Ver respaldo 📎</b></div>`:''}
       ${v.items.map(i=>`<div class="r"><span>${esc(i.desc)} × ${money(i.cant)}</span><b>${usd(i.cant*i.precio)}</b></div>`).join('')}
@@ -3407,12 +3532,15 @@ function printNota(id){
 
 /* ===================== LISTAS ===================== */
 function docRow(d, tipo){
-  const cls = {sol:'sol', cot:'', ne:'ne', vta:'vta'}[tipo];
-  const open = {sol:'openSolicitud', cot:'openCotizacion', ne:'openNota', vta:'openVenta'}[tipo];
+  const cls = {sol:'sol', cot:'', ne:'ne', vta:'vta', ped:'ped'}[tipo];
+  const open = {sol:'openSolicitud', cot:'openCotizacion', ne:'openNota', vta:'openVenta', ped:'openPedido'}[tipo];
   let right, badge, badgeTxt;
   if(tipo==='cot'){
     right = `<b>${usd(d.total)}</b><small>${d.tasa?bs(d.total*d.tasa):''}</small>`;
     badge = badgeTxt = d.estado;
+  } else if(tipo==='ped'){
+    right = `<b>${usd(d.total)}</b><small>${d.ventaNum?'venta '+esc(d.ventaNum):''}</small>`;
+    badge = d.estado; badgeTxt = pedidoLabel(d);
   } else if(tipo==='vta'){
     const saldo = d.saldo!=null ? d.saldo : d.total;
     right = `<b>${usd(d.total)}</b><small>${saldo>0?'saldo '+usd(saldo):'pagada'}</small>`;
@@ -3438,10 +3566,14 @@ function renderCotizar(){
     const l = S.cotizaciones.filter(d=>matches(d,q)).sort(byDate);
     box.innerHTML = l.length ? l.map(d=>docRow(d,'cot')).join('')
       : `<div class="empty">No hay cotizaciones${q?' que coincidan':''}. Crea la primera con el botón de arriba.</div>`;
+  } else if(S.sub.cotizar==='pedidos'){
+    const l = S.pedidos.filter(d=>matches(d,q)).sort(byDate);
+    box.innerHTML = l.length ? l.map(d=>docRow(d,'ped')).join('')
+      : `<div class="empty">No hay pedidos${q?' que coincidan':' todavía'}. Abre una cotización y pulsa <b>Crear pedido</b>.</div>`;
   } else if(S.sub.cotizar==='ventas'){
     const l = S.ventas.filter(d=>matches(d,q)).sort(byDate);
     box.innerHTML = l.length ? l.map(d=>docRow(d,'vta')).join('')
-      : `<div class="empty">No hay ventas${q?' que coincidan':' todavía'}. Abre una cotización y pulsa <b>Registrar venta</b>.</div>`;
+      : `<div class="empty">No hay ventas${q?' que coincidan':' todavía'}. Las ventas nacen al <b>despachar</b> un pedido.</div>`;
   } else {
     const l = S.notas.filter(d=>matches(d,q)).sort(byDate);
     box.innerHTML = l.length ? l.map(d=>docRow(d,'ne')).join('')
@@ -4263,6 +4395,7 @@ function renderInicio(){
 
   const recent = [
     ...S.cotizaciones.map(d=>({...d,_t:'cot'})),
+    ...S.pedidos.map(d=>({...d,_t:'ped'})),
     ...S.solicitudes.map(d=>({...d,_t:'sol'})),
     ...S.notas.map(d=>({...d,_t:'ne'}))
   ].sort(byDate).slice(0,8);
