@@ -12,6 +12,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <style>
 :root{
   --ink:#0f1e3d;         /* azul marino Panaven */
@@ -137,6 +139,7 @@ nav.bottom button.active{color:var(--brand); background:var(--brand-soft)}
 }
 .docnum.sol{background:#6d28d9}
 .docnum.ped{background:#4338ca}
+.docnum.fac{background:#0f766e}
 .docnum.ne{background:#0f766e}
 .docnum.vta{background:#0f9d58}
 .docnum.com{background:#b45309}
@@ -151,6 +154,7 @@ nav.bottom button.active{color:var(--brand); background:var(--brand-soft)}
 .badge.preparacion{background:var(--brand-soft); color:var(--brand)}
 .badge.despachado{background:var(--ok-soft); color:var(--ok)}
 .badge.cerrado{background:var(--gray-soft); color:var(--muted)}
+.badge.emitida{background:var(--ok-soft); color:var(--ok)}
 .badge.abonada{background:var(--brand-soft); color:var(--brand)}
 
 .empty{
@@ -602,7 +606,6 @@ input.f:focus, select.f:focus, textarea.f:focus, .search input:focus{
     <div class="fab-row">
       <button class="btn primary" onclick="newCotizacion()">+ Cotización</button>
       <button class="btn ghost" onclick="newSolicitud()">+ Solicitud a proveedor</button>
-      <button class="btn ghost" onclick="newNota()">+ Nota de entrega</button>
     </div>
 
     <!-- ===== Reporte del mes (solo administradores) ===== -->
@@ -670,6 +673,7 @@ input.f:focus, select.f:focus, textarea.f:focus, .search input:focus{
       <button data-sub="pedidos" onclick="setSubTab('cotizar','pedidos')"><svg fill="none" viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg>Pedidos</button>
       <button data-sub="ventas" onclick="setSubTab('cotizar','ventas')"><svg fill="none" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9v6M18 9v6"/></svg>Ventas</button>
       <button data-sub="entregas" onclick="setSubTab('cotizar','entregas')"><svg fill="none" viewBox="0 0 24 24"><path d="M3 7h11v10H3z"/><path d="M14 10h4l3 3v4h-7"/><circle cx="7" cy="18.5" r="1.8"/><circle cx="17.5" cy="18.5" r="1.8"/></svg>Entregas</button>
+      <button data-sub="facturas" onclick="setSubTab('cotizar','facturas')"><svg fill="none" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 12h6M9 16h6M12 10v8" stroke-width="1.5"/></svg>Facturas</button>
     </div>
     <div class="fab-row">
       <button class="btn primary block" id="btnNewDoc" onclick="newDocFromTab()">+ Nueva cotización</button>
@@ -862,7 +866,7 @@ const LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA+gAAACyCAMAAADmgBXa
 /* ===================== ESTADO ===================== */
 const S = {
   clientes: [], proveedores: [], productos: [],
-  solicitudes: [], cotizaciones: [], pedidos: [], notas: [], ventas: [], gastos: [], compras: [], usuarios: [], empleados: [], cuentas: [],
+  solicitudes: [], cotizaciones: [], pedidos: [], notas: [], facturas: [], ventas: [], gastos: [], compras: [], usuarios: [], empleados: [], cuentas: [],
   config: { tasa: 0, empresa: {nombre:'Panaven', rif:'', tel:'', dir:''}, iva: 16 },
   view: 'inicio',
   sub: { contactos:'clientes', cotizar:'cotizaciones', ventas:'porcobrar', compras:'solicitudes', gastos:'gastos' },
@@ -919,9 +923,9 @@ function setSubTab(group, sub){
     renderContactos();
   } else if(group==='cotizar'){
     const b = $('btnNewDoc');
-    // pedidos y ventas nacen de una cotización, no se crean sueltos
-    b.style.display = (sub==='ventas' || sub==='pedidos') ? 'none' : '';
-    b.textContent = sub==='cotizaciones' ? '+ Nueva cotización' : '+ Nueva nota de entrega';
+    // solo las cotizaciones nacen sueltas: pedidos, entregas y facturas vienen de la cadena
+    b.style.display = sub==='cotizaciones' ? '' : 'none';
+    b.textContent = '+ Nueva cotización';
     renderCotizar();
   } else if(group==='compras'){
     const b = $('btnNewCompras');
@@ -939,7 +943,7 @@ function setSubTab(group, sub){
   }
 }
 function newGastoFromTab(){ S.sub.gastos==='personal' ? empleadoForm() : gastoForm(); }
-function newDocFromTab(){ S.sub.cotizar==='cotizaciones' ? newCotizacion() : newNota(); }
+function newDocFromTab(){ newCotizacion(); }
 function newCompraFromTab(){ S.sub.compras==='solicitudes' ? newSolicitud() : compraForm(); }
 function newDatoFromTab(){ S.sub.contactos==='productos' ? productoForm() : newContacto(); }
 
@@ -958,7 +962,7 @@ const PERMISOS = {
 // Pestañas vedadas por rol (además de los módulos completos)
 const TABS_VEDADAS = {
   vendedor: [],
-  almacen:  [['cotizar','cotizaciones'],['cotizar','ventas'],['contactos','clientes'],['contactos','proveedores']],
+  almacen:  [['cotizar','cotizaciones'],['cotizar','ventas'],['cotizar','facturas'],['contactos','clientes'],['contactos','proveedores']],
 };
 const puede = x => !!(PERMISOS[ROL] && PERMISOS[ROL][x]);
 const puedeVer = v => (PERMISOS[ROL]?.nav || []).includes(v);
@@ -997,6 +1001,7 @@ function startApp(){
   listen('solicitudes','solicitudes');
   listen('cotizaciones','cotizaciones');
   listen('pedidos','pedidos');
+  listen('facturas','facturas');
   listen('notas','notas');
   listen('ventas','ventas');
   listen('cuentas','cuentas');
@@ -1285,7 +1290,7 @@ async function nextNumber(tipo){ // 'cot' | 'sol' | 'ne'
     t.set(ref, {[tipo]: cur+1}, {merge:true});
     return cur+1;
   });
-  const pref = {cot:'COT', sol:'SC', ne:'NE', vta:'VTA', rec:'REC', com:'C', pp:'PP', ped:'PED'}[tipo];
+  const pref = {cot:'COT', sol:'SC', ne:'NE', vta:'VTA', rec:'REC', com:'C', pp:'PP', ped:'PED', fac:'FAC'}[tipo];
   return pref + '-' + String(n).padStart(4,'0');
 }
 
@@ -1396,8 +1401,7 @@ function openContacto(col, id){
     <div class="doc-actions">
       ${c.tel?`<button class="btn ok" onclick="waTo('${esc(c.tel)}')">WhatsApp</button>`:''}
       ${esCli
-        ? `<button class="btn ghost" onclick="closeModal();newCotizacion('${id}')">Cotizarle</button>
-           <button class="btn ghost" onclick="closeModal();newNota('${id}')">Nota de entrega</button>`
+        ? `<button class="btn ghost" onclick="closeModal();newCotizacion('${id}')">Cotizarle</button>`
         : `<button class="btn ghost" onclick="closeModal();newSolicitud('${id}')">Pedir cotización</button>`}
       <button class="btn ghost" onclick="contactoForm('${col}', S['${col}'].find(x=>x.id==='${id}'))">Editar</button>
     </div>`);
@@ -1640,12 +1644,26 @@ function cotizacionForm(c, cliId){
   const clis = S.clientes.slice().sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
   const sel = c?.contactoId || cliId || '';
   openModal(modalHead(c ? 'Editar cotización '+c.numero : 'Nueva cotización', 'Presupuesto para un cliente en USD y Bs.') + `
-    <label class="f">Cliente *</label>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px">
+      <label class="f" style="margin-top:14px">Cliente *</label>
+      <button class="btn ghost" style="padding:6px 12px; font-size:13px" onclick="toggleClienteRapido()">+ Cliente nuevo</button>
+    </div>
     <select class="f" id="dContacto">
       <option value="">— Seleccionar cliente —</option>
       ${clis.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${esc(p.nombre)}</option>`).join('')}
     </select>
-    ${!clis.length?'<p class="sub" style="color:var(--warn)">No hay clientes registrados. Regístralos primero en Contactos.</p>':''}
+    <div id="cliRapidoBox" style="display:none; border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:8px; background:var(--bg)">
+      <b style="font-size:13px">Registro rápido de cliente</b>
+      <label class="f">Nombre / Razón social *</label>
+      <input class="f" id="crNombre" placeholder="Transporte El Rápido, C.A.">
+      <div class="grid2">
+        <div><label class="f">RIF / CI</label><input class="f" id="crRif" placeholder="J-12345678-9"></div>
+        <div><label class="f">Teléfono</label><input class="f" id="crTel" placeholder="0414-0000000" inputmode="tel"></div>
+      </div>
+      <button class="btn ok block" style="margin-top:10px" onclick="saveClienteRapido()">Guardar y seleccionar</button>
+      <p style="color:var(--muted); font-size:11px; margin:6px 0 0">Podrás completar dirección y correo después, en Contactos.</p>
+    </div>
+    ${!clis.length?'<p class="sub" style="color:var(--warn)">No hay clientes registrados. Usa el botón <b>+ Cliente nuevo</b>.</p>':''}
     ${linesEditor(true)}
     <div class="grid2" style="margin-top:12px">
       <div><label class="f" style="margin-top:0">Tasa Bs/USD</label>
@@ -1663,6 +1681,29 @@ function cotizacionForm(c, cliId){
       <button class="btn primary block" onclick="saveCotizacion('${c?c.id:''}')">${c?'Guardar cambios':'Crear cotización'}</button>
     </div>`);
   if(!S.editLines.length) addLine(true); else drawLines(true);
+}
+
+// Registro rápido de cliente sin salir de la cotización (no se pierden los artículos)
+function toggleClienteRapido(){
+  const box = $('cliRapidoBox'); if(!box) return;
+  box.style.display = box.style.display==='none' ? '' : 'none';
+  if(box.style.display==='') setTimeout(()=> $('crNombre').focus(), 50);
+}
+async function saveClienteRapido(){
+  const nombre = $('crNombre').value.trim();
+  if(!nombre) return toast('El nombre es obligatorio', true);
+  const ref = await db.collection('clientes').add({
+    nombre, rif: $('crRif').value.trim(), tel: $('crTel').value.trim(),
+    contacto:'', email:'', dir:'', notas:'',
+    creado: firebase.firestore.FieldValue.serverTimestamp(),
+    actualizado: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  const sel = $('dContacto');
+  const opt = document.createElement('option');
+  opt.value = ref.id; opt.textContent = nombre; opt.selected = true;
+  sel.appendChild(opt);
+  $('cliRapidoBox').style.display = 'none';
+  toast('Cliente "'+nombre+'" registrado y seleccionado');
 }
 
 function cotTotals(items, conIva){
@@ -1723,36 +1764,92 @@ function openCotizacion(id){
         : c.ventaId
         ? `<button class="btn primary" style="grid-column:1/-1" onclick="closeModal();go('cotizar');setSubTab('cotizar','ventas');setTimeout(()=>openVenta('${c.ventaId}'),150)">Ver venta ${esc(c.ventaNum||'')}</button>`
         : `<button class="btn primary" style="grid-column:1/-1" onclick="crearPedido('${id}')">Crear pedido</button>`}
-      <button class="btn ghost" onclick="notaDesdeCotizacion('${id}')">Nota de entrega suelta</button>
       <button class="btn ghost" onclick="cotizacionForm(S.cotizaciones.find(x=>x.id==='${id}'))">Editar</button>
-      <button class="btn danger" style="grid-column:1/-1" onclick="delDoc('cotizaciones','${id}')">Eliminar</button>
+      <button class="btn ghost" onclick="closeModal()">Cerrar</button>
+      ${(c.estado!=='anulada' && !c.pedidoId && !c.ventaId)?`<button class="btn danger" style="grid-column:1/-1" onclick="if(confirm('¿Anular la cotización ${esc(c.numero)}? Quedará guardada para consulta pero fuera de uso.'))setEstado('cotizaciones','${id}','anulada')">Anular</button>`:''}
     </div>`);
 }
 
-function waCotizacion(id){
+// Construye el PDF de la cotización con el mismo formato del impreso
+function pdfCotizacion(c){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:'mm', format:'letter'});
+  const emp = S.config.empresa || {};
+  const cli = S.clientes.find(x=>x.id===c.contactoId) || {};
+  const W = doc.internal.pageSize.getWidth();
+  // Logo (banner) arriba, a lo ancho
+  try{
+    const pr = doc.getImageProperties(LOGO);
+    const lw = W - 30, lh = lw * pr.height / pr.width;
+    doc.addImage(LOGO, 'PNG', 15, 10, lw, lh);
+    var y = 12 + lh + 4;
+  }catch(e){ var y = 20; }
+  doc.setFontSize(9); doc.setTextColor(110);
+  doc.text([emp.nombre||'Panaven', emp.rif, emp.dir, emp.tel].filter(Boolean).join('  ·  '), W/2, y, {align:'center'});
+  y += 8;
+  doc.setFontSize(15); doc.setTextColor(20); doc.setFont(undefined,'bold');
+  doc.text('COTIZACIÓN  '+c.numero, 15, y);
+  doc.setFont(undefined,'normal'); doc.setFontSize(10); doc.setTextColor(80);
+  doc.text('Fecha: '+fdate(c.fecha)+'  ·  Válida '+(c.validez||5)+' días', W-15, y, {align:'right'});
+  y += 7;
+  doc.setTextColor(30);
+  const cliLines = ['Cliente: '+(c.contactoNombre||'—')];
+  if(cli.rif) cliLines.push('RIF/CI: '+cli.rif);
+  if(cli.tel) cliLines.push('Teléfono: '+cli.tel);
+  if(cli.dir) cliLines.push('Dirección: '+cli.dir);
+  doc.text(cliLines, 15, y);
+  y += cliLines.length*5 + 2;
+  doc.autoTable({
+    startY: y, margin:{left:15, right:15},
+    head: [['#','Descripción','Cant.','Unidad','Precio USD','Importe USD']],
+    body: c.items.map((i,ix)=>[ix+1, i.desc, money(i.cant), i.unidad||'und', money(i.precio), money((num(i.cant)||0)*(num(i.precio)||0))]),
+    styles:{fontSize:9, cellPadding:2},
+    headStyles:{fillColor:[9,101,220], halign:'center'},
+    columnStyles:{0:{cellWidth:9, halign:'center'},2:{halign:'right', cellWidth:18},3:{cellWidth:18},4:{halign:'right', cellWidth:24},5:{halign:'right', cellWidth:28}}
+  });
+  let fy = doc.lastAutoTable.finalY + 6;
+  doc.setFontSize(10);
+  const tot = [['Subtotal', usd(c.subtotal)]];
+  if(c.conIva) tot.push(['IVA '+(c.ivaPct||16)+'%', usd(c.iva)]);
+  tot.push(['TOTAL', usd(c.total)]);
+  if(c.tasa) tot.push(['Total Bs (tasa '+money(c.tasa)+')', bs(c.total*c.tasa)]);
+  tot.forEach(([k,v],ix)=>{
+    if(ix===tot.length-(c.tasa?2:1)) doc.setFont(undefined,'bold');
+    doc.text(k, W-70, fy); doc.text(v, W-15, fy, {align:'right'}); fy += 5.5;
+    doc.setFont(undefined,'normal');
+  });
+  if(c.notas){
+    fy += 3; doc.setFontSize(9); doc.setTextColor(90);
+    doc.text('Condiciones: '+c.notas, 15, fy, {maxWidth: W-30});
+  }
+  return doc;
+}
+
+async function waCotizacion(id){
   const c = S.cotizaciones.find(x=>x.id===id); if(!c) return;
   const emp = S.config.empresa;
-  let txt = `*${emp.nombre||'Panaven'}* — Cotización *${c.numero}*\n`;
-  txt += `Cliente: ${c.contactoNombre}\nFecha: ${fdate(c.fecha)} (válida ${c.validez||5} días)\n\n`;
-  c.items.forEach(i=> txt += `• ${i.desc} — ${money(i.cant)} × ${usd(i.precio)} = ${usd(i.cant*i.precio)}\n`);
-  txt += `\nSubtotal: ${usd(c.subtotal)}`;
-  if(c.conIva) txt += `\nIVA ${c.ivaPct||16}%: ${usd(c.iva)}`;
-  txt += `\n*Total: ${usd(c.total)}*`;
-  if(c.tasa) txt += `\nTotal Bs: ${bs(c.total*c.tasa)} (tasa ${money(c.tasa)})`;
-  if(c.notas) txt += `\n\nCondiciones: ${c.notas}`;
-  txt += `\n\nGracias por su preferencia.`;
-  waSend(S.clientes.find(p=>p.id===c.contactoId)?.tel, txt);
-  markSent('cotizaciones', c);
+  const txt = `*${emp.nombre||'Panaven'}* — Cotización *${c.numero}*\nCliente: ${c.contactoNombre}\n*Total: ${usd(c.total)}*${c.tasa?` (${bs(c.total*c.tasa)})`:''}\n\nAdjuntamos la cotización en PDF. Gracias por su preferencia.`;
+  try{
+    const doc = pdfCotizacion(c);
+    const blob = doc.output('blob');
+    const file = new File([blob], c.numero+'.pdf', {type:'application/pdf'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      // Menú de compartir del teléfono: el usuario elige WhatsApp y el PDF va adjunto
+      await navigator.share({files:[file], title:'Cotización '+c.numero, text:txt});
+    } else {
+      // Respaldo (PC sin menú de compartir): descarga el PDF y abre WhatsApp con el texto
+      doc.save(c.numero+'.pdf');
+      toast('PDF descargado: adjúntalo en WhatsApp');
+      waSend(S.clientes.find(p=>p.id===c.contactoId)?.tel, txt);
+    }
+    markSent('cotizaciones', c);
+  }catch(e){
+    if(e.name!=='AbortError'){ console.error('waCotizacion', e); toast('No se pudo generar el PDF', true); }
+  }
 }
 
 /* ===================== NOTA DE ENTREGA ===================== */
-function newNota(cliId){ notaForm(null, cliId, null); }
-
-function notaDesdeCotizacion(cotId){
-  const c = S.cotizaciones.find(x=>x.id===cotId); if(!c) return;
-  notaForm(null, c.contactoId, c);
-}
-
+// Las notas de entrega ya no se crean sueltas: nacen del pedido (Generar nota de entrega).
 function notaForm(n, cliId, cot){
   S.editLines = n ? n.items.map(x=>({...x}))
               : cot ? cot.items.map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und'}))
@@ -1820,7 +1917,8 @@ function openNota(id){
       <button class="btn ghost" onclick="printNota('${id}')">Imprimir / PDF</button>
       <button class="btn ghost" onclick="notaForm(S.notas.find(x=>x.id==='${id}'))">Editar</button>
       <button class="btn ok" onclick="setEstado('notas','${id}','entregada');closeModal();toast('Marcada como entregada')">Marcar entregada</button>
-      <button class="btn danger" onclick="delDoc('notas','${id}')">Eliminar</button>
+      <button class="btn ghost" onclick="closeModal()">Cerrar</button>
+      ${n.estado!=='anulada'?`<button class="btn danger" style="grid-column:1/-1" onclick="if(confirm('¿Anular la nota ${esc(n.numero)}? Quedará guardada para consulta.'))setEstado('notas','${id}','anulada')">Anular</button>`:''}
     </div>`);
 }
 
@@ -1959,7 +2057,7 @@ async function confirmarPedido(cotId){
 
 function openPedido(id){
   const p = S.pedidos.find(x=>x.id===id); if(!p) return;
-  const estados = p.ventaId ? ['despachado','cerrado','anulado'] : ['pendiente','preparacion','anulado'];
+  const anulado = p.estado==='anulado';
   openModal(modalHead('Pedido '+p.numero, 'Cliente: '+(p.contactoNombre||'—')) + `
     <span class="badge ${p.estado}">${pedidoLabel(p)}</span>
     <div class="dl">
@@ -1971,98 +2069,174 @@ function openPedido(id){
       <div class="r"><span><b>Total</b></span><b>${usd(p.total)}</b></div>
       ${p.tasa?`<div class="r"><span>En bolívares (tasa ${money(p.tasa)})</span><b>${bs(p.total*p.tasa)}</b></div>`:''}
       ${p.orden?`<div class="r"><span>Orden de compra</span><b style="color:var(--brand); cursor:pointer" onclick="verArchivo('${p.orden.fid||''}','${p.orden.url||''}')">Ver respaldo 📎</b></div>`:''}
+      ${p.notaNum?`<div class="r"><span>Nota de entrega</span><b>${esc(p.notaNum)}</b></div>`:''}
+      ${p.facturaNum?`<div class="r"><span>Factura</span><b>${esc(p.facturaNum)}</b></div>`:''}
       ${p.por?`<div class="r"><span>Registrado por</span><b>${esc(p.por)}</b></div>`:''}
     </div>
-    <label class="f">Estado</label>
-    <select class="f" onchange="setEstado('pedidos','${id}',this.value)">
-      ${estados.map(e=>`<option value="${e}" ${e===p.estado?'selected':''}>${e==='preparacion'?'en preparación':e}</option>`).join('')}
-    </select>
     <div class="doc-actions">
-      <button class="btn ghost" onclick="printPedido('${id}')">Imprimir / PDF</button>
-      ${p.ventaId
-        ? `<button class="btn primary" onclick="closeModal();go('cotizar');setSubTab('cotizar','ventas');setTimeout(()=>openVenta('${p.ventaId}'),150)">Ver venta ${esc(p.ventaNum||'')}</button>`
-        : `<button class="btn primary" onclick="despacharPedido('${id}')">Despachar: crear venta + entrega</button>`}
+      ${(!anulado && !p.notaId)?`<button class="btn primary" onclick="generarDesdePedido('${id}','nota')">Generar nota de entrega</button>`:''}
+      ${(!anulado && !p.facturaId && p.tipoVenta==='fiscal')?`<button class="btn primary" onclick="generarDesdePedido('${id}','factura')">Generar factura</button>`:''}
       ${p.notaId?`<button class="btn ghost" onclick="closeModal();go('cotizar');setSubTab('cotizar','entregas');setTimeout(()=>openNota('${p.notaId}'),150)">Ver nota ${esc(p.notaNum||'')}</button>`:''}
-      ${(!p.ventaId && puede('anular'))?`<button class="btn danger" onclick="delPedido('${id}')">Eliminar</button>`:''}
+      ${p.facturaId?`<button class="btn ghost" onclick="closeModal();go('cotizar');setSubTab('cotizar','facturas');setTimeout(()=>openFactura('${p.facturaId}'),150)">Ver factura ${esc(p.facturaNum||'')}</button>`:''}
+      <button class="btn ghost" onclick="printPedido('${id}')">Imprimir / PDF</button>
+      <button class="btn ghost" onclick="closeModal()">Cerrar</button>
+      ${(!anulado && !p.ventaId)?`<button class="btn danger" style="grid-column:1/-1" onclick="anularPedido('${id}')">Anular</button>`:''}
     </div>`);
 }
 
-// Despachar = el pedido sale del almacén: crea la VENTA y su NOTA DE ENTREGA
-// en un batch atómico y enlaza todo con el pedido y la cotización de origen.
-async function despacharPedido(pedId){
+// Generar desde el pedido: el usuario elige NOTA DE ENTREGA o FACTURA.
+// La primera generación crea también la VENTA (la cuenta por cobrar) en el
+// mismo batch; la segunda se enlaza a la venta ya existente. Al terminar solo
+// se confirma el documento generado: quien despacha no es quien cobra.
+async function generarDesdePedido(pedId, tipo){
   const p = S.pedidos.find(x=>x.id===pedId); if(!p) return;
-  if(p.ventaId) return toast('Este pedido ya fue despachado (venta '+(p.ventaNum||'')+')', true);
   if(p.estado==='anulado') return toast('El pedido está anulado', true);
-  if(!confirm('Despachar el pedido '+p.numero+':\n\n• Se creará la venta por '+usd(p.total)+'\n• Se creará su nota de entrega\n\n¿Continuar?')) return;
+  if(tipo==='nota' && p.notaId) return toast('Este pedido ya tiene la nota '+(p.notaNum||''), true);
+  if(tipo==='factura' && p.facturaId) return toast('Este pedido ya tiene la factura '+(p.facturaNum||''), true);
+  if(tipo==='factura' && p.tipoVenta!=='fiscal') return toast('Este pedido es sin IVA: solo genera nota de entrega', true);
+  const nombreDoc = tipo==='nota' ? 'la nota de entrega' : 'la factura';
+  if(!confirm('Generar '+nombreDoc+' del pedido '+p.numero+' por '+usd(p.total)+'.\n\n¿Continuar?')) return;
   try{
-    const ventaNum = await nextVentaNumber();
-    const notaNum  = await nextNumber('ne');
-    const ventaRef = db.collection('ventas').doc();
-    const notaRef  = db.collection('notas').doc();
     const now = firebase.firestore.FieldValue.serverTimestamp();
-    const venta = {
-      numero: ventaNum,
-      contactoId: p.contactoId, contactoNombre: p.contactoNombre || '',
-      items: (p.items||[]).map(i=>({...i})),   // ya traen el costo congelado del pedido
-      conIva: !!p.conIva, ivaPct: p.ivaPct || S.config.iva || 16,
-      tipoVenta: p.tipoVenta || (p.conIva ? 'fiscal' : 'nota'),
-      subtotal: p.subtotal, iva: p.iva, total: p.total,
-      tasa: tasaActual() || p.tasa || 0,   // tasa del DÍA DEL DESPACHO
-      cotizacionId: p.cotizacionId || null, cotizacionNum: p.cotizacionNum || '',
-      pedidoId: p.id, pedidoNum: p.numero,
-      notaId: notaRef.id, notaNum,
-      pagos: [], abonado: 0, saldo: p.total,
-      por: quien(),
-      orden: p.orden || null,
-      estadoPago: 'pendiente',
-      estado: 'activa',
-      fecha: now, actualizado: now
-    };
-    const nota = {
-      numero: notaNum,
-      contactoId: p.contactoId, contactoNombre: p.contactoNombre || '',
-      items: (p.items||[]).map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und'})),
-      recibe: '', notas: '',
-      cotizacionNum: p.cotizacionNum || '',
-      pedidoNum: p.numero,
-      ventaId: ventaRef.id, ventaNum,
-      estado: 'pendiente',
-      fecha: now, actualizado: now
-    };
     const batch = db.batch();
-    batch.set(ventaRef, venta);
-    batch.set(notaRef, nota);
-    batch.update(db.collection('pedidos').doc(p.id),
-      {estado:'despachado', ventaId:ventaRef.id, ventaNum, notaId:notaRef.id, notaNum, actualizado:now});
+    const cambiosPedido = {estado:'despachado', actualizado: now};
+    const ventaNueva = !p.ventaId;
+
+    // Referencia y número del documento elegido (se crean primero para poder enlazar)
+    const numGenerado = await nextNumber(tipo==='nota' ? 'ne' : 'fac');
+    const docRef = db.collection(tipo==='nota' ? 'notas' : 'facturas').doc();
+
+    // La venta (cuenta por cobrar) nace con el primer documento que se genere
+    let ventaId = p.ventaId, ventaNum = p.ventaNum;
+    if(ventaNueva){
+      ventaNum = await nextVentaNumber();
+      const ventaRef = db.collection('ventas').doc();
+      ventaId = ventaRef.id;
+      const venta = {
+        numero: ventaNum,
+        contactoId: p.contactoId, contactoNombre: p.contactoNombre || '',
+        items: (p.items||[]).map(i=>({...i})),   // ya traen el costo congelado del pedido
+        conIva: !!p.conIva, ivaPct: p.ivaPct || S.config.iva || 16,
+        tipoVenta: p.tipoVenta || (p.conIva ? 'fiscal' : 'nota'),
+        subtotal: p.subtotal, iva: p.iva, total: p.total,
+        tasa: tasaActual() || p.tasa || 0,
+        cotizacionId: p.cotizacionId || null, cotizacionNum: p.cotizacionNum || '',
+        pedidoId: p.id, pedidoNum: p.numero,
+        pagos: [], abonado: 0, saldo: p.total,
+        por: quien(), orden: p.orden || null,
+        estadoPago: 'pendiente', estado: 'activa',
+        fecha: now, actualizado: now
+      };
+      if(tipo==='nota'){ venta.notaId = docRef.id; venta.notaNum = numGenerado; }
+      else { venta.facturaId = docRef.id; venta.facturaNum = numGenerado; }
+      batch.set(ventaRef, venta);
+      cambiosPedido.ventaId = ventaId; cambiosPedido.ventaNum = ventaNum;
+    } else {
+      // La venta ya existe (se generó el otro documento antes): solo se enlaza
+      batch.update(db.collection('ventas').doc(ventaId), tipo==='nota'
+        ? {notaId: docRef.id, notaNum: numGenerado, actualizado: now}
+        : {facturaId: docRef.id, facturaNum: numGenerado, actualizado: now});
+    }
+
+    if(tipo==='nota'){
+      batch.set(docRef, {
+        numero: numGenerado,
+        contactoId: p.contactoId, contactoNombre: p.contactoNombre || '',
+        items: (p.items||[]).map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und'})),
+        recibe: '', notas: '',
+        cotizacionNum: p.cotizacionNum || '', pedidoNum: p.numero,
+        ventaId, ventaNum,
+        estado: 'pendiente', fecha: now, actualizado: now
+      });
+      cambiosPedido.notaId = docRef.id; cambiosPedido.notaNum = numGenerado;
+    } else {
+      const cli = S.clientes.find(x=>x.id===p.contactoId) || {};
+      batch.set(docRef, {
+        numero: numGenerado,
+        contactoId: p.contactoId, contactoNombre: p.contactoNombre || '',
+        contactoRif: cli.rif || '', contactoDir: cli.dir || '',
+        items: (p.items||[]).map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und', precio:i.precio})),
+        subtotal: p.subtotal, ivaPct: p.ivaPct || 16, iva: p.iva, total: p.total,
+        tasa: tasaActual() || p.tasa || 0,
+        cotizacionNum: p.cotizacionNum || '',
+        pedidoId: p.id, pedidoNum: p.numero,
+        ventaId, ventaNum,
+        por: quien(),
+        estado: 'emitida', fecha: now, actualizado: now
+      });
+      cambiosPedido.facturaId = docRef.id; cambiosPedido.facturaNum = numGenerado;
+    }
+    batch.update(db.collection('pedidos').doc(p.id), cambiosPedido);
     await batch.commit();
     closeModal();
-    toast('Pedido despachado · venta '+ventaNum+' · nota '+notaNum);
-    go('cotizar'); setSubTab('cotizar','ventas');
-    setTimeout(()=> openVenta(ventaRef.id), 200);
+    toast((tipo==='nota'?'Nota de entrega ':'Factura ')+numGenerado+' generada satisfactoriamente');
   }catch(e){
-    console.error('despacharPedido', e);
-    toast(e.message || 'No se pudo despachar el pedido', true);
+    console.error('generarDesdePedido', e);
+    toast(e.message || 'No se pudo generar el documento', true);
   }
 }
 
-// Eliminar un pedido devuelve la cotización a su estado anterior (enviada)
+// Anular un pedido lo deja guardado para consulta y libera la cotización
 // para que pueda generar un pedido nuevo si hace falta.
-async function delPedido(id){
+async function anularPedido(id){
   const p = S.pedidos.find(x=>x.id===id); if(!p) return;
-  if(p.ventaId) return toast('No se puede eliminar: ya generó la venta '+(p.ventaNum||''), true);
-  if(!confirm('¿Eliminar el pedido '+p.numero+' definitivamente?\n\nLa cotización '+(p.cotizacionNum||'')+' volverá a quedar disponible.')) return;
+  if(p.ventaId) return toast('No se puede anular: ya generó la venta '+(p.ventaNum||''), true);
+  if(!confirm('¿Anular el pedido '+p.numero+'?\n\nQuedará guardado para consulta y la cotización '+(p.cotizacionNum||'')+' volverá a quedar disponible.')) return;
+  const now = firebase.firestore.FieldValue.serverTimestamp();
   const batch = db.batch();
-  batch.delete(db.collection('pedidos').doc(id));
+  batch.update(db.collection('pedidos').doc(id), {estado:'anulado', actualizado: now});
   if(p.cotizacionId){
     batch.update(db.collection('cotizaciones').doc(p.cotizacionId), {
       estado: 'enviada',
       pedidoId: firebase.firestore.FieldValue.delete(),
       pedidoNum: firebase.firestore.FieldValue.delete(),
-      actualizado: firebase.firestore.FieldValue.serverTimestamp()
+      actualizado: now
     });
   }
   await batch.commit();
-  closeModal(); toast('Pedido eliminado');
+  closeModal(); toast('Pedido '+p.numero+' anulado');
+}
+
+
+/* ===================== FACTURAS ===================== */
+function openFactura(id){
+  const f = S.facturas.find(x=>x.id===id); if(!f) return;
+  openModal(modalHead('Factura '+f.numero, 'Cliente: '+(f.contactoNombre||'—')) + `
+    <span class="badge ${f.estado}">${f.estado}</span>
+    <div class="dl">
+      <div class="r"><span>Fecha de emisión</span><b>${fdate(f.fecha)}</b></div>
+      ${f.contactoRif?`<div class="r"><span>RIF / CI</span><b>${esc(f.contactoRif)}</b></div>`:''}
+      ${f.pedidoNum?`<div class="r"><span>Pedido ref.</span><b>${esc(f.pedidoNum)}</b></div>`:''}
+      ${f.items.map(i=>`<div class="r"><span>${esc(i.desc)} × ${money(i.cant)}</span><b>${usd((num(i.cant)||0)*(num(i.precio)||0))}</b></div>`).join('')}
+      <div class="r"><span>Base imponible</span><b>${usd(f.subtotal)}</b></div>
+      <div class="r"><span>IVA ${f.ivaPct||16}%</span><b>${usd(f.iva)}</b></div>
+      <div class="r"><span><b>Total</b></span><b>${usd(f.total)}</b></div>
+      ${f.tasa?`<div class="r"><span>Total Bs (tasa ${money(f.tasa)})</span><b>${bs(f.total*f.tasa)}</b></div>`:''}
+      ${f.por?`<div class="r"><span>Emitida por</span><b>${esc(f.por)}</b></div>`:''}
+    </div>
+    <div class="doc-actions">
+      <button class="btn ghost" onclick="printFactura('${id}')">Imprimir / PDF</button>
+      ${f.pedidoId?`<button class="btn ghost" onclick="closeModal();go('cotizar');setSubTab('cotizar','pedidos');setTimeout(()=>openPedido('${f.pedidoId}'),150)">Ver pedido</button>`:''}
+      <button class="btn ghost" onclick="closeModal()">Cerrar</button>
+      ${f.estado!=='anulada'?`<button class="btn danger" style="grid-column:1/-1" onclick="if(confirm('¿Anular la factura ${esc(f.numero)}? Quedará guardada para consulta.'))setEstado('facturas','${id}','anulada')">Anular</button>`:''}
+    </div>`);
+}
+
+function printFactura(id){
+  const f = S.facturas.find(x=>x.id===id); if(!f) return;
+  doPrint(printHeader('FACTURA', f.numero, 'Fecha de emisión: '+fdate(f.fecha)+(f.pedidoNum?' · Pedido: '+f.pedidoNum:'')) + `
+    <div class="meta"><b>Cliente:</b> ${esc(f.contactoNombre)}<br>
+      ${f.contactoRif?`<b>RIF/CI:</b> ${esc(f.contactoRif)}<br>`:''}${f.contactoDir?`<b>Dirección:</b> ${esc(f.contactoDir)}<br>`:''}</div>
+    <table><tr><th style="width:40px">#</th><th>Descripción</th><th class="tr" style="width:70px">Cant.</th><th style="width:60px">Unidad</th><th class="tr" style="width:85px">Precio USD</th><th class="tr" style="width:95px">Importe USD</th></tr>
+    ${f.items.map((i,ix)=>`<tr><td>${ix+1}</td><td>${esc(i.desc)}</td><td class="tr">${money(i.cant)}</td><td>${esc(i.unidad||'und')}</td><td class="tr">${money(i.precio)}</td><td class="tr">${money((num(i.cant)||0)*(num(i.precio)||0))}</td></tr>`).join('')}
+    </table>
+    <div class="tot">
+      <div>Base imponible: <b>${usd(f.subtotal)}</b></div>
+      <div>IVA ${f.ivaPct||16}%: <b>${usd(f.iva)}</b></div>
+      <div>Total: <b>${usd(f.total)}</b></div>
+      ${f.tasa?`<div>Total Bs (tasa ${money(f.tasa)}): <b>${bs(f.total*f.tasa)}</b></div>`:''}
+    </div>
+    ${f.estado==='anulada'?'<div class="note" style="color:#b91c1c"><b>DOCUMENTO ANULADO</b></div>':''}`);
 }
 
 function printPedido(id){
@@ -2099,6 +2273,7 @@ function openVenta(id){
       ${v.cotizacionNum?`<div class="r"><span>Cotización</span><b>${esc(v.cotizacionNum)}</b></div>`:''}
       ${v.pedidoNum?`<div class="r"><span>Pedido</span><b>${esc(v.pedidoNum)}</b></div>`:''}
       ${v.notaNum?`<div class="r"><span>Nota de entrega</span><b>${esc(v.notaNum)}${nota?' · '+nota.estado:''}</b></div>`:''}
+      ${v.facturaNum?`<div class="r"><span>Factura</span><b>${esc(v.facturaNum)}</b></div>`:''}
       ${v.orden?`<div class="r"><span>Orden de compra</span><b style="color:var(--brand); cursor:pointer" onclick="verArchivo('${v.orden.fid||''}','${v.orden.url||''}')">Ver respaldo 📎</b></div>`:''}
       ${v.items.map(i=>`<div class="r"><span>${esc(i.desc)} × ${money(i.cant)}</span><b>${usd(i.cant*i.precio)}</b></div>`).join('')}
       <div class="r"><span>Subtotal</span><b>${usd(v.subtotal)}</b></div>
@@ -2121,6 +2296,8 @@ function openVenta(id){
       ${(!v.orden && v.estado!=='anulada')?`<button class="btn ghost" style="grid-column:1/-1" onclick="adjuntarOrden('${id}')">Adjuntar orden de compra 📎</button>`:''}
       <button class="btn ghost" onclick="printVenta('${id}')">Imprimir / PDF</button>
       ${v.notaId?`<button class="btn ghost" onclick="openNota('${v.notaId}')">Ver nota de entrega</button>`:''}
+      ${v.facturaId?`<button class="btn ghost" onclick="openFactura('${v.facturaId}')">Ver factura</button>`:''}
+      <button class="btn ghost" onclick="closeModal()">Cerrar</button>
       ${(v.estado!=='anulada'&&puede('anular'))?`<button class="btn danger" style="grid-column:1/-1" onclick="anularVenta('${id}')">Anular venta</button>`:''}
     </div>`);
 }
@@ -3532,11 +3709,14 @@ function printNota(id){
 
 /* ===================== LISTAS ===================== */
 function docRow(d, tipo){
-  const cls = {sol:'sol', cot:'', ne:'ne', vta:'vta', ped:'ped'}[tipo];
-  const open = {sol:'openSolicitud', cot:'openCotizacion', ne:'openNota', vta:'openVenta', ped:'openPedido'}[tipo];
+  const cls = {sol:'sol', cot:'', ne:'ne', vta:'vta', ped:'ped', fac:'fac'}[tipo];
+  const open = {sol:'openSolicitud', cot:'openCotizacion', ne:'openNota', vta:'openVenta', ped:'openPedido', fac:'openFactura'}[tipo];
   let right, badge, badgeTxt;
   if(tipo==='cot'){
     right = `<b>${usd(d.total)}</b><small>${d.tasa?bs(d.total*d.tasa):''}</small>`;
+    badge = badgeTxt = d.estado;
+  } else if(tipo==='fac'){
+    right = `<b>${usd(d.total)}</b><small>${d.pedidoNum?'pedido '+esc(d.pedidoNum):''}</small>`;
     badge = badgeTxt = d.estado;
   } else if(tipo==='ped'){
     right = `<b>${usd(d.total)}</b><small>${d.ventaNum?'venta '+esc(d.ventaNum):''}</small>`;
@@ -3573,7 +3753,11 @@ function renderCotizar(){
   } else if(S.sub.cotizar==='ventas'){
     const l = S.ventas.filter(d=>matches(d,q)).sort(byDate);
     box.innerHTML = l.length ? l.map(d=>docRow(d,'vta')).join('')
-      : `<div class="empty">No hay ventas${q?' que coincidan':' todavía'}. Las ventas nacen al <b>despachar</b> un pedido.</div>`;
+      : `<div class="empty">No hay ventas${q?' que coincidan':' todavía'}. Las ventas nacen al generar la nota de entrega o la factura de un pedido.</div>`;
+  } else if(S.sub.cotizar==='facturas'){
+    const l = S.facturas.filter(d=>matches(d,q)).sort(byDate);
+    box.innerHTML = l.length ? l.map(d=>docRow(d,'fac')).join('')
+      : `<div class="empty">No hay facturas${q?' que coincidan':' todavía'}. Se generan desde el pedido con el botón <b>Generar factura</b>.</div>`;
   } else {
     const l = S.notas.filter(d=>matches(d,q)).sort(byDate);
     box.innerHTML = l.length ? l.map(d=>docRow(d,'ne')).join('')
