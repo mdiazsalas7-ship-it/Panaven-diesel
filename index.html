@@ -1555,14 +1555,22 @@ function updateProdDatalist(){
   const dl = $('prodList'); if(!dl) return;
   dl.innerHTML = S.productos.map(p=>{
     const extra = [p.codigo, p.precio?('$ '+money(p.precio)):null, p.stock!=null?('stock '+money(p.stock)):null].filter(Boolean).join(' · ');
-    return `<option value="${esc(p.nombre)}">${esc(extra)}</option>`;
+    let ops = `<option value="${esc(p.nombre)}">${esc(extra)}</option>`;
+    // segunda entrada por número de parte: escribir el código encuentra el repuesto
+    if(p.codigo) ops += `<option value="${esc(p.codigo)}">${esc(p.nombre)}${p.precio?(' · $ '+money(p.precio)):''}</option>`;
+    return ops;
   }).join('');
 }
 
 function pickProd(i, withPrice){
-  const name = (S.editLines[i]?.desc||'').trim().toLowerCase();
-  const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === name);
+  const txt = (S.editLines[i]?.desc||'').trim().toLowerCase();
+  if(!txt) return;
+  // busca por nombre o por número de parte (código)
+  const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === txt)
+         || S.productos.find(x=> (x.codigo||'').trim().toLowerCase() === txt);
   if(!p) return;
+  S.editLines[i].desc = p.nombre;          // si escribió el código, se normaliza al nombre
+  S.editLines[i].codigo = p.codigo || '';  // el número de parte viaja con la línea
   S.editLines[i].unidad = p.unidad || 'und';
   if(withPrice && p.precio) S.editLines[i].precio = p.precio;
   drawLines(withPrice);
@@ -1586,7 +1594,7 @@ function drawLines(withPrice){
   const cls = withPrice ? '' : ' no-price';
   $('linesBox').innerHTML = S.editLines.map((l,i)=>`
     <div class="line${cls}">
-      <input placeholder="Escribe para buscar en el catálogo…" list="prodList" autocomplete="off" value="${esc(l.desc)}" oninput="S.editLines[${i}].desc=this.value" onchange="pickProd(${i}, ${withPrice})">
+      <div style="min-width:0"><input placeholder="Nombre o nº de parte…" list="prodList" autocomplete="off" value="${esc(l.desc)}" oninput="S.editLines[${i}].desc=this.value; if(!this.value) S.editLines[${i}].codigo=''" onchange="pickProd(${i}, ${withPrice})" style="width:100%">${l.codigo?`<small style="display:block; color:var(--muted); font-size:11px; padding:2px 2px 0">Nº parte: ${esc(l.codigo)}</small>`:''}</div>
       <input type="number" inputmode="decimal" min="0" step="any" value="${l.cant}" oninput="S.editLines[${i}].cant=this.value; calcTotals()">
       ${withPrice
         ? `<input type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" value="${l.precio}" oninput="S.editLines[${i}].precio=this.value; calcTotals()">`
@@ -1612,7 +1620,7 @@ function calcTotals(){
 function cleanLines(){
   return S.editLines
     .filter(l=> (l.desc||'').trim())
-    .map(l=> ({desc:l.desc.trim(), cant:num(l.cant)||1, precio:num(l.precio), unidad:(l.unidad||'und').trim()}));
+    .map(l=> ({desc:l.desc.trim(), codigo:(l.codigo||'').trim(), cant:num(l.cant)||1, precio:num(l.precio), unidad:(l.unidad||'und').trim()}));
 }
 
 /* ===================== SOLICITUD DE COTIZACIÓN (a proveedor) ===================== */
@@ -1861,11 +1869,11 @@ function pdfCotizacion(c){
   y += cliLines.length*5 + 2;
   doc.autoTable({
     startY: y, margin:{left:15, right:15},
-    head: [['#','Descripción','Cant.','Unidad','Precio USD','Importe USD']],
-    body: c.items.map((i,ix)=>[ix+1, i.desc, money(i.cant), i.unidad||'und', money(i.precio), money((num(i.cant)||0)*(num(i.precio)||0))]),
+    head: [['#','Código','Descripción','Cant.','Unidad','Precio USD','Importe USD']],
+    body: c.items.map((i,ix)=>[ix+1, i.codigo||'—', i.desc, money(i.cant), i.unidad||'und', money(i.precio), money((num(i.cant)||0)*(num(i.precio)||0))]),
     styles:{fontSize:9, cellPadding:2},
     headStyles:{fillColor:[9,101,220], halign:'center'},
-    columnStyles:{0:{cellWidth:9, halign:'center'},2:{halign:'right', cellWidth:18},3:{cellWidth:18},4:{halign:'right', cellWidth:24},5:{halign:'right', cellWidth:28}}
+    columnStyles:{0:{cellWidth:8, halign:'center'},1:{cellWidth:26},3:{halign:'right', cellWidth:15},4:{cellWidth:16},5:{halign:'right', cellWidth:22},6:{halign:'right', cellWidth:26}}
   });
   let fy = doc.lastAutoTable.finalY + 6;
   doc.setFontSize(10);
@@ -2085,7 +2093,8 @@ async function confirmarPedido(cotId){
       contactoId: c.contactoId, contactoNombre: c.contactoNombre || '',
       items: c.items.map(i=>{
         // Congela el costo del producto en este momento (para la ganancia real)
-        const p = S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === (i.desc||'').trim().toLowerCase());
+        const p = (i.codigo && S.productos.find(x=> (x.codigo||'').trim().toLowerCase() === i.codigo.trim().toLowerCase()))
+               || S.productos.find(x=> (x.nombre||'').trim().toLowerCase() === (i.desc||'').trim().toLowerCase());
         return {...i, costo: (p && p.costo!=null) ? p.costo : null};
       }),
       conIva, ivaPct: t.ivaPct,
@@ -2123,7 +2132,7 @@ function openPedido(id){
     <div class="dl">
       <div class="r"><span>Fecha</span><b>${fdate(p.fecha)}</b></div>
       ${p.cotizacionNum?`<div class="r"><span>Cotización ref.</span><b>${esc(p.cotizacionNum)}</b></div>`:''}
-      ${p.items.map(i=>`<div class="r"><span>${esc(i.desc)} × ${money(i.cant)}</span><b>${usd((num(i.cant)||0)*(num(i.precio)||0))}</b></div>`).join('')}
+      ${p.items.map(i=>`<div class="r"><span>${i.codigo?`<span style="color:var(--muted)">${esc(i.codigo)}</span> · `:''}${esc(i.desc)} × ${money(i.cant)}</span><b>${usd((num(i.cant)||0)*(num(i.precio)||0))}</b></div>`).join('')}
       <div class="r"><span>Subtotal</span><b>${usd(p.subtotal)}</b></div>
       ${p.conIva?`<div class="r"><span>IVA ${p.ivaPct||16}%</span><b>${usd(p.iva)}</b></div>`:''}
       <div class="r"><span><b>Total</b></span><b>${usd(p.total)}</b></div>
@@ -2202,7 +2211,7 @@ async function generarDesdePedido(pedId, tipo){
       batch.set(docRef, {
         numero: numGenerado,
         contactoId: p.contactoId, contactoNombre: p.contactoNombre || '',
-        items: (p.items||[]).map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und'})),
+        items: (p.items||[]).map(i=>({desc:i.desc, codigo:i.codigo||'', cant:i.cant, unidad:i.unidad||'und'})),
         recibe: '', notas: '',
         cotizacionNum: p.cotizacionNum || '', pedidoNum: p.numero,
         ventaId, ventaNum,
@@ -2215,7 +2224,7 @@ async function generarDesdePedido(pedId, tipo){
         numero: numGenerado,
         contactoId: p.contactoId, contactoNombre: p.contactoNombre || '',
         contactoRif: cli.rif || '', contactoDir: cli.dir || '',
-        items: (p.items||[]).map(i=>({desc:i.desc, cant:i.cant, unidad:i.unidad||'und', precio:i.precio})),
+        items: (p.items||[]).map(i=>({desc:i.desc, codigo:i.codigo||'', cant:i.cant, unidad:i.unidad||'und', precio:i.precio})),
         subtotal: p.subtotal, ivaPct: p.ivaPct || 16, iva: p.iva, total: p.total,
         tasa: tasaActual() || p.tasa || 0,
         cotizacionNum: p.cotizacionNum || '',
@@ -2267,7 +2276,7 @@ function openFactura(id){
       <div class="r"><span>Fecha de emisión</span><b>${fdate(f.fecha)}</b></div>
       ${f.contactoRif?`<div class="r"><span>RIF / CI</span><b>${esc(f.contactoRif)}</b></div>`:''}
       ${f.pedidoNum?`<div class="r"><span>Pedido ref.</span><b>${esc(f.pedidoNum)}</b></div>`:''}
-      ${f.items.map(i=>`<div class="r"><span>${esc(i.desc)} × ${money(i.cant)}</span><b>${usd((num(i.cant)||0)*(num(i.precio)||0))}</b></div>`).join('')}
+      ${f.items.map(i=>`<div class="r"><span>${i.codigo?`<span style="color:var(--muted)">${esc(i.codigo)}</span> · `:''}${esc(i.desc)} × ${money(i.cant)}</span><b>${usd((num(i.cant)||0)*(num(i.precio)||0))}</b></div>`).join('')}
       <div class="r"><span>Base imponible</span><b>${usd(f.subtotal)}</b></div>
       <div class="r"><span>IVA ${f.ivaPct||16}%</span><b>${usd(f.iva)}</b></div>
       <div class="r"><span><b>Total</b></span><b>${usd(f.total)}</b></div>
@@ -2287,8 +2296,8 @@ function printFactura(id){
   doPrint(printHeader('FACTURA', f.numero, 'Fecha de emisión: '+fdate(f.fecha)+(f.pedidoNum?' · Pedido: '+f.pedidoNum:'')) + `
     <div class="meta"><b>Cliente:</b> ${esc(f.contactoNombre)}<br>
       ${f.contactoRif?`<b>RIF/CI:</b> ${esc(f.contactoRif)}<br>`:''}${f.contactoDir?`<b>Dirección:</b> ${esc(f.contactoDir)}<br>`:''}</div>
-    <table><tr><th style="width:40px">#</th><th>Descripción</th><th class="tr" style="width:70px">Cant.</th><th style="width:60px">Unidad</th><th class="tr" style="width:85px">Precio USD</th><th class="tr" style="width:95px">Importe USD</th></tr>
-    ${f.items.map((i,ix)=>`<tr><td>${ix+1}</td><td>${esc(i.desc)}</td><td class="tr">${money(i.cant)}</td><td>${esc(i.unidad||'und')}</td><td class="tr">${money(i.precio)}</td><td class="tr">${money((num(i.cant)||0)*(num(i.precio)||0))}</td></tr>`).join('')}
+    <table><tr><th style="width:36px">#</th><th style="width:92px">Código</th><th>Descripción</th><th class="tr" style="width:55px">Cant.</th><th style="width:55px">Unidad</th><th class="tr" style="width:80px">Precio USD</th><th class="tr" style="width:90px">Importe USD</th></tr>
+    ${f.items.map((i,ix)=>`<tr><td>${ix+1}</td><td>${esc(i.codigo||'—')}</td><td>${esc(i.desc)}</td><td class="tr">${money(i.cant)}</td><td>${esc(i.unidad||'und')}</td><td class="tr">${money(i.precio)}</td><td class="tr">${money((num(i.cant)||0)*(num(i.precio)||0))}</td></tr>`).join('')}
     </table>
     <div class="tot">
       <div>Base imponible: <b>${usd(f.subtotal)}</b></div>
@@ -2305,8 +2314,8 @@ function printPedido(id){
   doPrint(printHeader('PEDIDO', p.numero, 'Fecha: '+fdate(p.fecha)+(p.cotizacionNum?' · Ref: '+p.cotizacionNum:'')) + `
     <div class="meta"><b>Cliente:</b> ${esc(p.contactoNombre)}<br>
       ${cli.rif?`<b>RIF/CI:</b> ${esc(cli.rif)}<br>`:''}${cli.tel?`<b>Teléfono:</b> ${esc(cli.tel)}<br>`:''}${cli.dir?`<b>Dirección:</b> ${esc(cli.dir)}<br>`:''}</div>
-    <table><tr><th style="width:40px">#</th><th>Descripción</th><th class="tr" style="width:80px">Cantidad</th><th style="width:70px">Unidad</th><th class="tr" style="width:90px">Precio</th><th class="tr" style="width:100px">Importe</th></tr>
-    ${p.items.map((i,ix)=>`<tr><td>${ix+1}</td><td>${esc(i.desc)}</td><td class="tr">${money(i.cant)}</td><td>${esc(i.unidad||'und')}</td><td class="tr">${usd(i.precio)}</td><td class="tr">${usd((num(i.cant)||0)*(num(i.precio)||0))}</td></tr>`).join('')}
+    <table><tr><th style="width:36px">#</th><th style="width:92px">Código</th><th>Descripción</th><th class="tr" style="width:60px">Cant.</th><th style="width:55px">Unidad</th><th class="tr" style="width:80px">Precio</th><th class="tr" style="width:90px">Importe</th></tr>
+    ${p.items.map((i,ix)=>`<tr><td>${ix+1}</td><td>${esc(i.codigo||'—')}</td><td>${esc(i.desc)}</td><td class="tr">${money(i.cant)}</td><td>${esc(i.unidad||'und')}</td><td class="tr">${usd(i.precio)}</td><td class="tr">${usd((num(i.cant)||0)*(num(i.precio)||0))}</td></tr>`).join('')}
     </table>
     <div class="tot">
       <div>Subtotal: <b>${usd(p.subtotal)}</b></div>
@@ -3737,8 +3746,8 @@ function printCotizacion(id){
   doPrint(printHeader('COTIZACIÓN', c.numero, 'Fecha: '+fdate(c.fecha)+' · Validez: '+(c.validez||5)+' días') + `
     <div class="meta"><b>Cliente:</b> ${esc(c.contactoNombre)}<br>
       ${cli.rif?`<b>RIF/CI:</b> ${esc(cli.rif)}<br>`:''}${cli.tel?`<b>Teléfono:</b> ${esc(cli.tel)}<br>`:''}${cli.dir?`<b>Dirección:</b> ${esc(cli.dir)}<br>`:''}</div>
-    <table><tr><th style="width:40px">#</th><th>Descripción</th><th class="tr" style="width:60px">Cant.</th><th class="tr" style="width:90px">P. Unit. $</th><th class="tr" style="width:95px">Total $</th></tr>
-    ${c.items.map((i,ix)=>`<tr><td>${ix+1}</td><td>${esc(i.desc)}</td><td class="tr">${money(i.cant)}</td><td class="tr">${money(i.precio)}</td><td class="tr">${money(i.cant*i.precio)}</td></tr>`).join('')}
+    <table><tr><th style="width:36px">#</th><th style="width:92px">Código</th><th>Descripción</th><th class="tr" style="width:55px">Cant.</th><th class="tr" style="width:85px">P. Unit. $</th><th class="tr" style="width:90px">Total $</th></tr>
+    ${c.items.map((i,ix)=>`<tr><td>${ix+1}</td><td>${esc(i.codigo||'—')}</td><td>${esc(i.desc)}</td><td class="tr">${money(i.cant)}</td><td class="tr">${money(i.precio)}</td><td class="tr">${money(i.cant*i.precio)}</td></tr>`).join('')}
     </table>
     <div class="ptot">
       <div class="r"><span>Subtotal</span><b>${usd(c.subtotal)}</b></div>
@@ -3756,8 +3765,8 @@ function printNota(id){
   doPrint(printHeader('NOTA DE ENTREGA', n.numero, 'Fecha: '+fdate(n.fecha)+(n.cotizacionNum?' · Ref: '+n.cotizacionNum:'')) + `
     <div class="meta"><b>Cliente:</b> ${esc(n.contactoNombre)}<br>
       ${cli.rif?`<b>RIF/CI:</b> ${esc(cli.rif)}<br>`:''}${cli.tel?`<b>Teléfono:</b> ${esc(cli.tel)}<br>`:''}${cli.dir?`<b>Dirección:</b> ${esc(cli.dir)}<br>`:''}</div>
-    <table><tr><th style="width:40px">#</th><th>Descripción</th><th class="tr" style="width:80px">Cantidad</th><th style="width:70px">Unidad</th></tr>
-    ${n.items.map((i,ix)=>`<tr><td>${ix+1}</td><td>${esc(i.desc)}</td><td class="tr">${money(i.cant)}</td><td>${esc(i.unidad||'und')}</td></tr>`).join('')}
+    <table><tr><th style="width:36px">#</th><th style="width:92px">Código</th><th>Descripción</th><th class="tr" style="width:75px">Cantidad</th><th style="width:65px">Unidad</th></tr>
+    ${n.items.map((i,ix)=>`<tr><td>${ix+1}</td><td>${esc(i.codigo||'—')}</td><td>${esc(i.desc)}</td><td class="tr">${money(i.cant)}</td><td>${esc(i.unidad||'und')}</td></tr>`).join('')}
     </table>
     ${n.notas?`<div class="note"><b>Observaciones:</b> ${esc(n.notas)}</div>`:''}
     <div class="note">Declaro haber recibido conforme la mercancía descrita en esta nota.</div>
@@ -3797,7 +3806,10 @@ function docRow(d, tipo){
   </div>`;
 }
 const byDate = (a,b)=> (b.fecha?.seconds||0) - (a.fecha?.seconds||0);
-const matches = (d,q)=> !q || (d.numero+' '+(d.contactoNombre||'')).toLowerCase().includes(q);
+// Busca por número de documento, cliente, y también dentro de los artículos
+// (descripción y número de parte): escribir un código encuentra sus documentos.
+const matches = (d,q)=> !q || (d.numero+' '+(d.contactoNombre||'')+' '
+  +(d.items||[]).map(i=>(i.codigo||'')+' '+(i.desc||'')).join(' ')).toLowerCase().includes(q);
 
 function renderCotizar(){
   const q = ($('qCotizar').value||'').toLowerCase();
