@@ -78,6 +78,8 @@ nav.bottom button{
   font-size:10.5px; font-weight:600; color:var(--muted); padding:6px 2px; border-radius:12px;
 }
 nav.bottom button svg{width:23px; height:23px; stroke:currentColor}
+.subnav{display:none}
+nav.bottom button .chev{display:none}
 nav.bottom button.active{color:var(--brand); background:var(--brand-soft)}
 
 /* ===== Componentes ===== */
@@ -267,6 +269,22 @@ textarea.f{resize:vertical; min-height:64px}
   nav.bottom button svg{width:21px; height:21px}
   nav.bottom button:hover{background:var(--gray-soft); color:var(--ink)}
   nav.bottom button.active:hover{background:var(--brand-soft); color:var(--brand)}
+
+  /* Acordeón de submódulos (solo escritorio) */
+  nav.bottom button .chev{display:inline-block; margin-left:auto; font-size:11px; color:var(--muted); transition:transform .18s}
+  nav.bottom button.open .chev{transform:rotate(90deg)}
+  .subnav{display:none; flex-direction:column; gap:1px; margin:2px 0 6px 26px; border-left:1.5px solid var(--line); padding-left:8px}
+  .subnav.open{display:flex}
+  .subnav button{
+    display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer;
+    font:inherit; font-size:13px; font-weight:600; color:var(--muted);
+    padding:8px 10px; border-radius:8px;
+  }
+  .subnav button:hover{background:var(--gray-soft); color:var(--ink)}
+  .subnav button.active{background:var(--brand-soft); color:var(--brand)}
+
+  /* Las pestañas dentro de la vista sobran en PC: el menú lateral las sustituye */
+  .tabs{display:none}
 
   .stat-grid{grid-template-columns:repeat(4,1fr)}
   .item-row{padding:14px 18px}
@@ -819,18 +837,23 @@ input.f:focus, select.f:focus, textarea.f:focus, .search input:focus{
   <button id="nav-cotizar" onclick="go('cotizar')">
     <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9v6M18 9v6"/></svg>Ventas
   </button>
+  <div class="subnav" data-group="cotizar"></div>
   <button id="nav-ventas" onclick="go('ventas')">
     <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Cobranza
   </button>
+  <div class="subnav" data-group="ventas"></div>
   <button id="nav-compras" onclick="go('compras')">
     <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="9" cy="20" r="1.6"/><circle cx="17" cy="20" r="1.6"/><path d="M2 3h3l2.6 12.4a1.5 1.5 0 0 0 1.5 1.1h8.2a1.5 1.5 0 0 0 1.5-1.2L21 7H6"/></svg>Compras
   </button>
+  <div class="subnav" data-group="compras"></div>
   <button id="nav-gastos" onclick="go('gastos')">
     <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4h13l3 4v12H4z"/><path d="M4 8h16"/><path d="M9 13h6M9 16.5h4"/></svg>Gastos
   </button>
+  <div class="subnav" data-group="gastos"></div>
   <button id="nav-contactos" onclick="go('contactos')">
     <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="8" ry="2.8"/><path d="M4 5.5v6c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8v-6"/><path d="M4 11.5v6c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8v-6"/></svg>Datos
   </button>
+  <div class="subnav" data-group="contactos"></div>
   <button id="nav-ajustes" onclick="go('ajustes')">
     <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.4 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.4-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2Z"/></svg>Ajustes
   </button>
@@ -904,6 +927,40 @@ function modalHead(title, sub){
 }
 
 /* ===================== NAVEGACIÓN ===================== */
+const GRUPOS_SUBNAV = ['cotizar','ventas','compras','gastos','contactos'];
+
+// Construye los submenús del acordeón copiando las pestañas visibles de cada
+// vista: así los permisos por rol (applyRol) se heredan sin duplicar reglas.
+function buildSubnavs(){
+  GRUPOS_SUBNAV.forEach(g=>{
+    const cont = document.querySelector(`.subnav[data-group="${g}"]`);
+    const navBtn = $('nav-'+g);
+    if(!cont || !navBtn) return;
+    const tabs = [...document.querySelectorAll(`#tabs-${g} button`)]
+      .filter(b => b.style.display !== 'none');
+    cont.innerHTML = tabs.map(b=>
+      `<button data-sub="${b.dataset.sub}" onclick="event.stopPropagation();go('${g}');setSubTab('${g}','${b.dataset.sub}')">${esc(b.textContent.trim())}</button>`
+    ).join('');
+    if(tabs.length && !navBtn.querySelector('.chev')){
+      const ch = document.createElement('span'); ch.className='chev'; ch.textContent='❯';
+      navBtn.appendChild(ch);
+    }
+    syncSubnav(g);
+  });
+}
+
+// Marca el hijo activo y abre/cierra el grupo según la vista actual
+function syncSubnav(g){
+  const cont = document.querySelector(`.subnav[data-group="${g}"]`);
+  const navBtn = $('nav-'+g);
+  if(!cont || !navBtn) return;
+  const abierto = S.view === g;
+  cont.classList.toggle('open', abierto);
+  navBtn.classList.toggle('open', abierto);
+  cont.querySelectorAll('button').forEach(b=>
+    b.classList.toggle('active', b.dataset.sub === S.sub[g]));
+}
+
 function go(view){
   if(ROL && !puedeVer(view)) view = 'inicio';
   S.view = view;
@@ -911,12 +968,14 @@ function go(view){
     $('view-'+v).style.display = v===view ? '' : 'none';
     $('nav-'+v).classList.toggle('active', v===view);
   });
+  GRUPOS_SUBNAV.forEach(syncSubnav);   // acordeón: solo el grupo activo abierto
   window.scrollTo(0,0);
 }
 function setSubTab(group, sub){
   S.sub[group] = sub;
   document.querySelectorAll(`#tabs-${group} button`).forEach(b=>
     b.classList.toggle('active', b.dataset.sub===sub));
+  syncSubnav(group);
   if(group==='contactos'){
     $('btnNewContacto').textContent = sub==='clientes' ? '+ Registrar cliente'
       : sub==='proveedores' ? '+ Registrar proveedor' : '+ Registrar producto';
@@ -987,6 +1046,7 @@ function applyRol(){
   ['cardTasa','cardEmpresa','cardRespaldo','cardUsuarios','cardReset'].forEach(id=>{
     const el = $(id); if(el) el.style.display = puede('admin') ? '' : 'none';
   });
+  buildSubnavs();   // el acordeón hereda las pestañas ya filtradas por rol
   if(!puedeVer(S.view)) go('inicio');
 }
 
